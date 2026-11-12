@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Geolocation } from '@capacitor/geolocation'
 import MapView from './MapView'
 import type { MapMode } from './MapView'
-import { IconCheck, IconDriver, IconPin, IconShield, IconUser, IconWallet } from './icons'
+import { IconCheck, IconDriver, IconHistory, IconList, IconPin, IconShield, IconUser, IconWallet } from './icons'
 import logoUrl from './assets/icon-1024.png'
 import { uploadImageAsDataUrl, saveDoc } from './firebaseDb'
 import { otpRemaining, sendOtpCode, verifyOtpCode } from './otp'
@@ -72,6 +72,15 @@ function rideTimes(r: Ride) {
   )
 }
 
+function rideStatusLabel(s: Ride['status']): string {
+  return s === 'matched' ? 'في الطريق للعميل'
+    : s === 'driver_arrived' ? 'وصلت للعميل'
+    : s === 'on_trip' ? 'الرحلة شغالة'
+    : s === 'completed' ? 'مكتملة'
+    : s === 'cancelled' ? 'ملغاة'
+    : 'بندور على سواقين…'
+}
+
 export default function App() {
   const [state, setState] = useState<AppState>(() => loadState())
   const [role, setRole] = useState<Role>(() => {
@@ -126,6 +135,11 @@ export default function App() {
     .reverse()
     .find((r) => ['searching', 'matched', 'driver_arrived', 'on_trip'].includes(r.status))
   const lastRide = [...state.rides].reverse()[0]
+  // رحلة الكابتن الحالية ورحلاته السابقة (مكتملة أو ملغاة)
+  const myCurrentRide = state.rides.find((r) => r.driverCode === state.driver.code && ['matched', 'driver_arrived', 'on_trip'].includes(r.status))
+  const myPastRides = state.rides
+    .filter((r) => r.driverCode === state.driver.code && (r.status === 'completed' || r.status === 'cancelled'))
+    .sort((a, b) => b.createdAt - a.createdAt)
 
   // ---- طلب إذن الموقع فور فتح التطبيق ----
   // أول ما التطبيق يفتح نطلب إذن الموقع من النظام، ولو اتوافق عليه
@@ -571,9 +585,79 @@ export default function App() {
       .includes(q)
   })
 
+  // الصفحة الرئيسية للكابتن: الطلبات المتاحة للقبول فقط
   const driverView = (
     <div className="card">
-      <h2><span className="icon-chip"><IconDriver /></span>بيانات الكابتن</h2>
+      <h2><span className="icon-chip"><IconList /></span>الطلبات المتاحة</h2>
+      <label className="row">
+        <input type="checkbox" checked={state.driver.online} onChange={(e) => update({ driver: { ...state.driver, online: e.target.checked } })} />
+        متاح لاستقبال الرحلات
+      </label>
+      {isDebtBlocked(state.debt) && (
+        <p className="warn">⛔ وصلت لحد المديونية ({money(MAX_DEBT_EGP)}) — مش هتستقبل رحلات جديدة لحد ما تسدد.</p>
+      )}
+      {state.rides.filter((r) => r.status === 'searching').length === 0 && <p>مفيش طلبات دلوقتي.</p>}
+      {state.rides.filter((r) => r.status === 'searching').map((r) => (
+        <div key={r.orderNo} className="ride">
+          {avatar(r.passengerPhotoUrl, r.passengerName)} <b>{r.orderNo}</b> — {r.passengerName} ({r.passengerCode}) — تقييم العميل: {r.passengerRating} ★
+          <br />من: <span className="lock-note">🔒 نقطة الركوب — هتظهر بعد قبول الطلب</span>
+          <br />إلى: {r.destination.label}
+          <br />السعر المقترح: <b>{money(r.fare)}</b>
+          <br />وقت الطلب: {fmtTime(r.createdAt)}
+          <br />
+          <button className="btn" disabled={isDebtBlocked(state.debt) || !state.driver.online} onClick={() => {
+            const offer: Offer = { id: `${r.orderNo}-${state.driver.code}`, rideId: r.orderNo, driverCode: state.driver.code, driverName: state.driver.name || 'الكابتن', driverRating: state.driver.ratingAvg, driverPhotoUrl: state.driver.photoUrl ?? null, price: r.fare, etaMinutes: 5, plate: state.driver.plate, color: state.driver.color, model: state.driver.model }
+            update({ rides: state.rides.map((x) => x.orderNo === r.orderNo ? { ...x, offers: [...x.offers, offer] } : x) })
+            showNotice('عرضك اتبعت للعميل.')
+          }}>اقبل بالسعر ({money(r.fare)})</button>
+        </div>
+      ))}
+    </div>
+  )
+
+  // رحلات الكابتن: الحالية + السابقة (مكتملة أو ملغاة)
+  const driverTripsView = (
+    <div className="card">
+      <h2><span className="icon-chip"><IconHistory /></span>رحلاتي</h2>
+      <h3>رحلتي الحالية</h3>
+      {myCurrentRide ? (
+        <div className="ride">
+          <b>{myCurrentRide.orderNo}</b> — {avatar(myCurrentRide.passengerPhotoUrl, myCurrentRide.passengerName)} {myCurrentRide.passengerName} — {rideStatusLabel(myCurrentRide.status)}
+          <br />من: {myCurrentRide.pickup.label} — إلى: {myCurrentRide.destination.label}
+          <br />
+          <a className="link" target="_blank" rel="noreferrer" href={`https://www.google.com/maps/dir/?api=1&destination=${myCurrentRide.pickup.lat},${myCurrentRide.pickup.lng}`}>الاتجاهات لنقطة الركوب ↗</a>
+          {rideTimes(myCurrentRide)}
+          <div className="row">
+            {myCurrentRide.status === 'matched' && <button className="btn" onClick={() => setRideStatus(myCurrentRide.orderNo, 'driver_arrived')}>وصلت للعميل</button>}
+            {myCurrentRide.status === 'driver_arrived' && <button className="btn" onClick={() => setRideStatus(myCurrentRide.orderNo, 'on_trip')}>ابدأ الرحلة</button>}
+            {myCurrentRide.status === 'on_trip' && <button className="btn" onClick={() => setRideStatus(myCurrentRide.orderNo, 'completed')}>وصلنا — إنهاء الرحلة</button>}
+            <button className="btn danger" onClick={() => { if (confirm('متأكد؟ هتلغي الرحلة دي.')) setRideStatus(myCurrentRide.orderNo, 'cancelled') }}>إلغاء الرحلة</button>
+          </div>
+        </div>
+      ) : (
+        <p>مفيش رحلة شغالة دلوقتي.</p>
+      )}
+      <h3>رحلات سابقة</h3>
+      {myPastRides.length === 0 && <p>لسه مفيش رحلات مكتملة أو ملغاة.</p>}
+      {myPastRides.map((r) => (
+        <div key={r.orderNo} className="ride">
+          {avatar(r.passengerPhotoUrl, r.passengerName)} <b>{r.orderNo}</b> — {r.passengerName} — {rideStatusLabel(r.status)} — <b>{money(r.fare)}</b>
+          {rideTimes(r)}
+          {r.status === 'completed' && r.driverRatingForPassenger === null && (
+            <div>
+              <p>قيّم العميل بعد الرحلة:</p>
+              {stars(ratePassenger, (n) => { setRatePassenger(n); submitRating(r.orderNo, 'driver', n) })}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+
+  // الملف الشخصي للكابتن: بياناته وبطاقته وصورته
+  const driverProfileView = (
+    <div className="card">
+      <h2><span className="icon-chip"><IconUser /></span>الملف الشخصي</h2>
       {driverFormOpen ? (
         <>
           <div className="grid">
@@ -608,54 +692,9 @@ export default function App() {
         </div>
       )}
       <label className="row">
-        <input type="checkbox" checked={state.driver.online} onChange={(e) => update({ driver: { ...state.driver, online: e.target.checked } })} />
-        متاح لاستقبال الرحلات
-      </label>
-      <label className="row">
         <input type="checkbox" checked={state.driver.sharingLocation} onChange={(e) => update({ driver: { ...state.driver, sharingLocation: e.target.checked } })} />
         مشاركة موقعي مباشرة (يتحدث كل 5 ثواني)
       </label>
-      {isDebtBlocked(state.debt) && (
-        <p className="warn">⛔ وصلت لحد المديونية ({money(MAX_DEBT_EGP)}) — مش هتستقبل رحلات جديدة لحد ما تسدد.</p>
-      )}
-      <h3>الطلبات الواردة</h3>
-      {state.rides.filter((r) => r.status === 'searching').length === 0 && <p>مفيش طلبات دلوقتي.</p>}
-      {state.rides.filter((r) => r.status === 'searching').map((r) => (
-        <div key={r.orderNo} className="ride">
-          {avatar(r.passengerPhotoUrl, r.passengerName)} <b>{r.orderNo}</b> — {r.passengerName} ({r.passengerCode}) — تقييم العميل: {r.passengerRating} ★
-          <br />من: <span className="lock-note">🔒 نقطة الركوب — هتظهر بعد قبول الطلب</span>
-          <br />إلى: {r.destination.label}
-          <br />السعر المقترح: <b>{money(r.fare)}</b>
-          <br />وقت الطلب: {fmtTime(r.createdAt)}
-          <br />
-          <button className="btn" disabled={isDebtBlocked(state.debt) || !state.driver.online} onClick={() => {
-            const offer: Offer = { id: `${r.orderNo}-${state.driver.code}`, rideId: r.orderNo, driverCode: state.driver.code, driverName: state.driver.name || 'الكابتن', driverRating: state.driver.ratingAvg, driverPhotoUrl: state.driver.photoUrl ?? null, price: r.fare, etaMinutes: 5, plate: state.driver.plate, color: state.driver.color, model: state.driver.model }
-            update({ rides: state.rides.map((x) => x.orderNo === r.orderNo ? { ...x, offers: [...x.offers, offer] } : x) })
-            showNotice('عرضك اتبعت للعميل.')
-          }}>اقبل بالسعر ({money(r.fare)})</button>
-        </div>
-      ))}
-      <h3>رحلتي الحالية</h3>
-      {activeRide && activeRide.status !== 'searching' && (
-        <div className="ride">
-          <b>{activeRide.orderNo}</b> — {avatar(activeRide.passengerPhotoUrl, activeRide.passengerName)} {activeRide.passengerName} — {activeRide.status === 'matched' ? 'في الطريق للعميل' : activeRide.status === 'driver_arrived' ? 'وصلت للعميل' : 'الرحلة شغالة'}
-          <br />من: {activeRide.pickup.label} — إلى: {activeRide.destination.label}
-          <br />
-          <a className="link" target="_blank" rel="noreferrer" href={`https://www.google.com/maps/dir/?api=1&destination=${activeRide.pickup.lat},${activeRide.pickup.lng}`}>الاتجاهات لنقطة الركوب ↗</a>
-          {rideTimes(activeRide)}
-          <div className="row">
-            {activeRide.status === 'matched' && <button className="btn" onClick={() => setRideStatus(activeRide.orderNo, 'driver_arrived')}>وصلت للعميل</button>}
-            {activeRide.status === 'driver_arrived' && <button className="btn" onClick={() => setRideStatus(activeRide.orderNo, 'on_trip')}>ابدأ الرحلة</button>}
-            {activeRide.status === 'on_trip' && <button className="btn" onClick={() => setRideStatus(activeRide.orderNo, 'completed')}>وصلنا — إنهاء الرحلة</button>}
-          </div>
-          {activeRide.status === 'completed' && (
-            <div>
-              <p>قيّم العميل بعد الرحلة:</p>
-              {stars(ratePassenger, (n) => { setRatePassenger(n); submitRating(activeRide.orderNo, 'driver', n) })}
-            </div>
-          )}
-        </div>
-      )}
     </div>
   )
 
@@ -855,7 +894,7 @@ export default function App() {
           <button className="btn role-btn" onClick={() => chooseRole('driver')}><IconDriver /> أنا كابتن — عايز أشتغل</button>
         </div>
         <footer className="footer">
-          <p className="muted">ind toktok — الإصدار 11</p>
+          <p className="muted">ind toktok — الإصدار 12</p>
         </footer>
       </div>
     )
@@ -869,14 +908,18 @@ export default function App() {
       </header>
       {appRole === 'driver' && (
         <nav className="tabs">
-          <button className={role === 'driver' ? 'tab active' : 'tab'} onClick={() => setRole('driver')}><IconDriver />سواق</button>
-          <button className={role === 'wallet' ? 'tab active' : 'tab'} onClick={() => setRole('wallet')}><IconWallet />محفظة السواق</button>
+          <button className={role === 'driver' ? 'tab active' : 'tab'} onClick={() => setRole('driver')}><IconList />الطلبات</button>
+          <button className={role === 'trips' ? 'tab active' : 'tab'} onClick={() => setRole('trips')}><IconHistory />رحلاتي</button>
+          <button className={role === 'wallet' ? 'tab active' : 'tab'} onClick={() => setRole('wallet')}><IconWallet />المحفظة</button>
+          <button className={role === 'profile' ? 'tab active' : 'tab'} onClick={() => setRole('profile')}><IconUser />الملف الشخصي</button>
         </nav>
       )}
       {notice && <div className="notice">{notice}</div>}
       {role === 'passenger' && passengerView}
       {role === 'driver' && driverView}
+      {role === 'trips' && driverTripsView}
       {role === 'wallet' && walletView}
+      {role === 'profile' && driverProfileView}
       {role === 'admin' && (<><button className="btn small" onClick={() => setRole('driver')}>← رجوع للسواق</button>{adminView}</>)}
       <footer className="footer">
         <p>آخر رحلة: {lastRide ? `${lastRide.orderNo} — ${lastRide.status}` : 'لسه مفيش رحلات'}</p>
@@ -887,7 +930,7 @@ export default function App() {
             <button className="link-btn" onClick={() => chooseRole('passenger')}>تبديل — أنا راكب</button>
           </div>
         )}
-        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 11</p>
+        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 12</p>
       </footer>
     </div>
   )

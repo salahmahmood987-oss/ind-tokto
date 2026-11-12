@@ -90,3 +90,26 @@ export function IconCheck(p: IconProps): JSX.Element {
     </Svg>
   )
 }
+
+/** قائمة طلبات */
+export function IconList(p: IconProps): JSX.Element {
+  return (
+    <Svg {...p}>
+      <path d="M8.5 6.5h12M8.5 12h12M8.5 17.5h12" />
+      <circle cx="4" cy="6.5" r="1" fill="currentColor" stroke="none" />
+      <circle cx="4" cy="12" r="1" fill="currentColor" stroke="none" />
+      <circle cx="4" cy="17.5" r="1" fill="currentColor" stroke="none" />
+    </Svg>
+  )
+}
+
+/** سجل الرحلات — ساعة بعقارب */
+export function IconHistory(p: IconProps): JSX.Element {
+  return (
+    <Svg {...p}>
+      <path d="M3.5 12a8.5 8.5 0 1 1 2.5 6" />
+      <path d="M3.5 12H7l-1.5 2.5" />
+      <path d="M12 7.5V12l3 2" />
+    </Svg>
+  )
+}
