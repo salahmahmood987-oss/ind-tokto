@@ -1,0 +1,12 @@
+{
+	"appId": "com.indtoktok.app",
+	"appName": "ind toktok",
+	"webDir": "dist",
+	"backgroundColor": "#fff8ec",
+	"android": {
+		"allowMixedContent": true
+	},
+	"server": {
+		"cleartext": true
+	}
+}
