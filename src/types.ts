@@ -12,6 +12,8 @@ export interface PassengerProfile {
   /** كود عميل ثابت لنفس رقم الموبايل، مثل C-1002 */
   code: string
   phoneVerified: boolean
+  /** صورة شخصية (Data URL مضغوطة) تظهر للكابتن */
+  photoUrl: string | null
   ratingAvg: number
   ratingCount: number
 }
@@ -30,6 +32,8 @@ export interface DriverProfile {
   ratingCount: number
   /** صورة البطاقة: Data URL مضغوطة (JPEG) مخزنة داخل مستند Firestore — بدون Storage */
   idCardUrl: string | null
+  /** صورة شخصية (Data URL مضغوطة) تظهر للعميل — غير صورة البطاقة */
+  photoUrl: string | null
   idCardStatus: 'none' | 'pending' | 'approved' | 'rejected'
   currentLat: number | null
   currentLng: number | null
@@ -49,6 +53,7 @@ export interface Offer {
   driverCode: string
   driverName: string
   driverRating: number
+  driverPhotoUrl: string | null
   price: number
   etaMinutes: number
   plate: string
@@ -80,6 +85,10 @@ export interface Ride {
   arrivedAt: number | null
   /** وقت نهاية الرحلة */
   completedAt: number | null
+  /** صورة العميل — تظهر للكابتن */
+  passengerPhotoUrl: string | null
+  /** صورة الكابتن — تظهر للعميل */
+  driverPhotoUrl: string | null
   /** تقييم الراكب للكابتن بعد الرحلة */
   passengerRatingForDriver: number | null
   /** تقييم الكابتن للراكب بعد الرحلة */

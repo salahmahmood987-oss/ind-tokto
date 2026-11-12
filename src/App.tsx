@@ -51,6 +51,15 @@ function fmtTime(ts: number | null | undefined): string {
   return new Date(ts).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })
 }
 
+// صورة شخصية دائرية — لو مفيش صورة يظهر أول حرف من الاسم
+function avatar(url: string | null | undefined, name: string) {
+  return url ? (
+    <img src={url} alt={name} className="avatar" />
+  ) : (
+    <span className="avatar avatar-placeholder">{name.trim().charAt(0) || '؟'}</span>
+  )
+}
+
 // خط زمني للرحلة: وقت الطلب والقبول والوصول والنهاية
 function rideTimes(r: Ride) {
   return (
@@ -271,6 +280,8 @@ export default function App() {
       acceptedAt: null,
       arrivedAt: null,
       completedAt: null,
+      passengerPhotoUrl: state.passenger?.photoUrl ?? null,
+      driverPhotoUrl: null,
       passengerRatingForDriver: null,
       driverRatingForPassenger: null,
     }
@@ -289,6 +300,7 @@ export default function App() {
             driverCode: d.code,
             driverName: d.name,
             driverRating: d.rating,
+            driverPhotoUrl: null,
             price: Math.max(FARE_MIN, fare + (i === 0 ? 0 : i * 5)),
             etaMinutes: 3 + i * 2,
             plate: d.plate,
@@ -316,6 +328,7 @@ export default function App() {
       driverLng: ride.pickup.lng + 0.012,
       driverLocAt: Date.now(),
       acceptedAt: Date.now(),
+      driverPhotoUrl: offer.driverPhotoUrl ?? null,
     }
     update({ rides: state.rides.map((r) => (r.orderNo === ride.orderNo ? updated : r)) })
     showNotice(`الكابتن ${offer.driverName} في الطريق إليك.`)
@@ -428,6 +441,7 @@ export default function App() {
       phone,
       code: clientCodeForPhone(phone),
       phoneVerified: true,
+      photoUrl: state.passenger?.photoUrl ?? null,
       ratingAvg: 0,
       ratingCount: 0,
     }
@@ -524,6 +538,31 @@ export default function App() {
     showNotice('صورة البطاقة اترفعت وبانتظار مراجعة الإدارة.')
   }
 
+  // رفع الصورة الشخصية (للعميل أو الكابتن) — بتظهر للطرف التاني
+  const [profilePhotoFile, setProfilePhotoFile] = useState<File | null>(null)
+  async function uploadProfilePhoto(who: 'passenger' | 'driver') {
+    if (!profilePhotoFile) return
+    let url: string
+    try {
+      url = await uploadImageAsDataUrl(profilePhotoFile)
+    } catch (e) {
+      showNotice(e instanceof Error ? e.message : 'مقدرناش نجهّز الصورة.')
+      return
+    }
+    if (who === 'passenger' && state.passenger) {
+      const passenger = { ...state.passenger, photoUrl: url }
+      update({ passenger })
+      void saveDoc('passengers', passenger.phone, passenger)
+      showNotice('صورتك اتحفظت وهتظهر للكابتن.')
+    } else {
+      const driver = { ...state.driver, photoUrl: url }
+      update({ driver })
+      void saveDoc('drivers', driver.code, driver as unknown as Record<string, unknown>)
+      showNotice('صورتك اتحفظت وهتظهر للعميل.')
+    }
+    setProfilePhotoFile(null)
+  }
+
   const filteredRides = state.rides.filter((r) => {
     const q = search.trim()
     if (!q) return true
@@ -555,11 +594,15 @@ export default function App() {
               <p>حالة البطاقة: {state.driver.idCardStatus === 'pending' ? 'بانتظار المراجعة' : state.driver.idCardStatus}</p>
             </div>
           )}
+          <h3>صورتي الشخصية (بتظهر للعميل)</h3>
+          {state.driver.photoUrl && <img src={state.driver.photoUrl} alt="صورتي الشخصية" className="avatar avatar-lg" />}
+          <input type="file" accept="image/*" onChange={(e) => setProfilePhotoFile(e.target.files?.[0] || null)} />
+          <button className="btn" onClick={() => uploadProfilePhoto('driver')} disabled={!profilePhotoFile}>حفظ صورتي</button>
           <button className="btn" onClick={() => setDriverFormOpen(false)} disabled={!state.driver.name.trim() || !state.driver.phone.trim()}>حفظ بياناتي</button>
         </>
       ) : (
         <div className="saved-bar">
-          <IconDriver /> {state.driver.name} — {state.driver.phone} — كودك: <b>{state.driver.code}</b>
+          {avatar(state.driver.photoUrl, state.driver.name)} {state.driver.name} — {state.driver.phone} — كودك: <b>{state.driver.code}</b>
           {state.driver.idCardUrl && <span> — البطاقة: {state.driver.idCardStatus === 'pending' ? 'بانتظار المراجعة' : state.driver.idCardStatus}</span>}
           <button className="link-btn" onClick={() => setDriverFormOpen(true)}>تعديل بياناتي</button>
         </div>
@@ -579,14 +622,14 @@ export default function App() {
       {state.rides.filter((r) => r.status === 'searching').length === 0 && <p>مفيش طلبات دلوقتي.</p>}
       {state.rides.filter((r) => r.status === 'searching').map((r) => (
         <div key={r.orderNo} className="ride">
-          <b>{r.orderNo}</b> — {r.passengerName} ({r.passengerCode}) — تقييم العميل: {r.passengerRating} ★
+          {avatar(r.passengerPhotoUrl, r.passengerName)} <b>{r.orderNo}</b> — {r.passengerName} ({r.passengerCode}) — تقييم العميل: {r.passengerRating} ★
           <br />من: <span className="lock-note">🔒 نقطة الركوب — هتظهر بعد قبول الطلب</span>
           <br />إلى: {r.destination.label}
           <br />السعر المقترح: <b>{money(r.fare)}</b>
           <br />وقت الطلب: {fmtTime(r.createdAt)}
           <br />
           <button className="btn" disabled={isDebtBlocked(state.debt) || !state.driver.online} onClick={() => {
-            const offer: Offer = { id: `${r.orderNo}-${state.driver.code}`, rideId: r.orderNo, driverCode: state.driver.code, driverName: state.driver.name || 'الكابتن', driverRating: state.driver.ratingAvg, price: r.fare, etaMinutes: 5, plate: state.driver.plate, color: state.driver.color, model: state.driver.model }
+            const offer: Offer = { id: `${r.orderNo}-${state.driver.code}`, rideId: r.orderNo, driverCode: state.driver.code, driverName: state.driver.name || 'الكابتن', driverRating: state.driver.ratingAvg, driverPhotoUrl: state.driver.photoUrl ?? null, price: r.fare, etaMinutes: 5, plate: state.driver.plate, color: state.driver.color, model: state.driver.model }
             update({ rides: state.rides.map((x) => x.orderNo === r.orderNo ? { ...x, offers: [...x.offers, offer] } : x) })
             showNotice('عرضك اتبعت للعميل.')
           }}>اقبل بالسعر ({money(r.fare)})</button>
@@ -595,7 +638,7 @@ export default function App() {
       <h3>رحلتي الحالية</h3>
       {activeRide && activeRide.status !== 'searching' && (
         <div className="ride">
-          <b>{activeRide.orderNo}</b> — {activeRide.passengerName} — {activeRide.status === 'matched' ? 'في الطريق للعميل' : activeRide.status === 'driver_arrived' ? 'وصلت للعميل' : 'الرحلة شغالة'}
+          <b>{activeRide.orderNo}</b> — {avatar(activeRide.passengerPhotoUrl, activeRide.passengerName)} {activeRide.passengerName} — {activeRide.status === 'matched' ? 'في الطريق للعميل' : activeRide.status === 'driver_arrived' ? 'وصلت للعميل' : 'الرحلة شغالة'}
           <br />من: {activeRide.pickup.label} — إلى: {activeRide.destination.label}
           <br />
           <a className="link" target="_blank" rel="noreferrer" href={`https://www.google.com/maps/dir/?api=1&destination=${activeRide.pickup.lat},${activeRide.pickup.lng}`}>الاتجاهات لنقطة الركوب ↗</a>
@@ -643,6 +686,18 @@ export default function App() {
         <div className="saved-bar">
           <IconUser /> {state.passenger.name} — {state.passenger.phone} — كودك: <b>{state.passenger.code}</b> <IconCheck /> موثق
           <button className="link-btn" onClick={() => { setRegName(state.passenger?.name || ''); setRegPhone(state.passenger?.phone || ''); setEditingPhone(true) }}>تعديل الرقم</button>
+        </div>
+      )}
+
+      {state.passenger && !editingPhone && (
+        <div className="profile-box">
+          {avatar(state.passenger.photoUrl, state.passenger.name)}
+          <div>
+            <b>ملفي الشخصي — {state.passenger.name}</b>
+            <p className="muted">صورتك بتظهر للكابتن لما تطلب رحلة</p>
+            <input type="file" accept="image/*" onChange={(e) => setProfilePhotoFile(e.target.files?.[0] || null)} />
+            <button className="btn small" onClick={() => uploadProfilePhoto('passenger')} disabled={!profilePhotoFile}>حفظ صورتي</button>
+          </div>
         </div>
       )}
 
@@ -696,12 +751,12 @@ export default function App() {
 
       {activeRide && (
         <div className="ride">
-          <b>{activeRide.orderNo}</b> — {activeRide.status === 'searching' ? 'بندور على سواقين…' : activeRide.status === 'matched' ? `الكابتن ${activeRide.driverName} في الطريق إليك` : activeRide.status}
+          <b>{activeRide.orderNo}</b> — {activeRide.status === 'searching' ? 'بندور على سواقين…' : activeRide.status === 'matched' ? (<>{avatar(activeRide.driverPhotoUrl, activeRide.driverName || 'الكابتن')} الكابتن {activeRide.driverName} في الطريق إليك</>) : activeRide.status}
           {rideTimes(activeRide)}
           {activeRide.driverLocAt && <p className="muted">موقع السواق اتحدّث {new Date(activeRide.driverLocAt).toLocaleTimeString('ar-EG')}</p>}
           {activeRide.status === 'searching' && activeRide.offers.map((o) => (
             <div key={o.id} className="offer">
-              <b>{o.driverName}</b> — {o.driverRating} ★ — {o.model} {o.color} ({o.plate}) — يوصل في {o.etaMinutes} دقيقة
+              {avatar(o.driverPhotoUrl, o.driverName)} <b>{o.driverName}</b> — {o.driverRating} ★ — {o.model} {o.color} ({o.plate}) — يوصل في {o.etaMinutes} دقيقة
               <br />السعر: <b>{money(o.price)}</b>
               <button className="btn" onClick={() => acceptOffer(activeRide, o)}>اختار الكابتن ده</button>
             </div>
@@ -800,7 +855,7 @@ export default function App() {
           <button className="btn role-btn" onClick={() => chooseRole('driver')}><IconDriver /> أنا كابتن — عايز أشتغل</button>
         </div>
         <footer className="footer">
-          <p className="muted">ind toktok — الإصدار 10</p>
+          <p className="muted">ind toktok — الإصدار 11</p>
         </footer>
       </div>
     )
@@ -832,7 +887,7 @@ export default function App() {
             <button className="link-btn" onClick={() => chooseRole('passenger')}>تبديل — أنا راكب</button>
           </div>
         )}
-        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 10</p>
+        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 11</p>
       </footer>
     </div>
   )

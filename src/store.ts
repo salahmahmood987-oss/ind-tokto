@@ -50,6 +50,7 @@ export function defaultDriver(): DriverProfile {
     ratingCount: 0,
     idCardUrl: null,
     idCardStatus: 'none',
+    photoUrl: null,
     currentLat: null,
     currentLng: null,
   }
