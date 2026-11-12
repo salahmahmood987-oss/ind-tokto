@@ -547,6 +547,7 @@ export default function App() {
           ratingCount: (doc.ratingCount as number) ?? cur.ratingCount,
           debt: (doc.debt as number) ?? cur.debt,
           totalPaid: (doc.totalPaid as number) ?? cur.totalPaid,
+          balance: (doc.balance as number) ?? cur.balance ?? 0,
           name: cur.name || (doc.name as string) || cur.name,
           photoUrl: cur.photoUrl ?? (doc.photoUrl as string | null) ?? null,
         },
@@ -786,7 +787,14 @@ export default function App() {
     // وبتتحفظ في مستنده على السيرفر — عشان تظهر على أي جهاز
     let driver = state.driver
     if (status === 'completed') {
-      driver = { ...driver, debt: Math.round((driver.debt + commissionFor(ride.fare)) * 100) / 100 }
+      // عمولة 5% — بتتخصم من رصيد المحفظة الأول، والباقي بس بيتسجل مديونية
+      const commission = commissionFor(ride.fare)
+      const fromBalance = Math.min(driver.balance ?? 0, commission)
+      driver = {
+        ...driver,
+        balance: Math.round(((driver.balance ?? 0) - fromBalance) * 100) / 100,
+        debt: Math.round((driver.debt + commission - fromBalance) * 100) / 100,
+      }
       void saveDoc('drivers', driver.code, driver as unknown as Record<string, unknown>)
     }
     update({ rides, driver })
@@ -992,20 +1000,27 @@ export default function App() {
       return
     }
     // خصم المديونية من مستند السواق نفسه على السيرفر — مش من مديونية جهاز الأدمن
+    // المبلغ بيسدد المديونية الأول، وأي زيادة عنها بتتحفظ رصيد في محفظة السواق
     void loadDoc('drivers', payment.driverCode).then((doc) => {
       const curDebt = (doc?.debt as number) ?? 0
       const curPaid = (doc?.totalPaid as number) ?? 0
+      const curBalance = (doc?.balance as number) ?? 0
+      const toDebt = Math.min(payment.amount, curDebt)
+      const remainder = Math.round((payment.amount - toDebt) * 100) / 100
       const next = {
         ...((doc ?? {}) as Record<string, unknown>),
-        debt: Math.max(0, Math.round((curDebt - payment.amount) * 100) / 100),
+        debt: Math.round((curDebt - toDebt) * 100) / 100,
+        balance: Math.round((curBalance + remainder) * 100) / 100,
         totalPaid: Math.round((curPaid + payment.amount) * 100) / 100,
       }
       void saveDoc('drivers', payment.driverCode, next)
       if (state.driver.code === payment.driverCode) {
-        update({ driver: { ...state.driver, debt: next.debt as number, totalPaid: next.totalPaid as number } })
+        update({ driver: { ...state.driver, debt: next.debt as number, balance: next.balance as number, totalPaid: next.totalPaid as number } })
       }
+      showNotice(remainder > 0
+        ? `تمت الموافقة — المديونية اتخصمت، والزيادة ${money(remainder)} بقت رصيد في محفظة السواق.`
+        : 'تمت الموافقة — المديونية اتخصمت فوراً.')
     })
-    showNotice('تمت الموافقة — المديونية اتخصمت فوراً.')
   }
 
   async function uploadIdCard() {
@@ -1462,6 +1477,7 @@ export default function App() {
       <h2><span className="icon-chip green"><IconWallet /></span>محفظة الكابتن</h2>
       <p>المديونية الحالية: <b>{money(state.driver.debt)}</b> من حد أقصى {money(MAX_DEBT_EGP)}</p>
       <div className="progress"><div className="progress-fill" style={{ width: `${Math.min(100, (state.driver.debt / MAX_DEBT_EGP) * 100)}%` }} /></div>
+      <p>رصيدك في المحفظة: <b style={{ color: 'var(--green)' }}>{money(state.driver.balance ?? 0)}</b> — لو حوّلت أكتر من مديونيتك الزيادة بتتحفظ هنا، وعمولات الرحلات الجاية (5%) بتتخصم من الرصيد ده الأول قبل ما تتسجل مديونية.</p>
       <p>إجمالي ما سددته: {money(state.driver.totalPaid)} — العمولة 5% من كل رحلة مكتملة تتسجل مديونية تلقائياً.</p>
       {isDebtBlocked(state.driver.debt) && <p className="warn">⛔ وصلت للحد الأقصى — مش هتستقبل رحلات جديدة لحد ما تسدد.</p>}
       <h3>حوّل للإدارة</h3>
@@ -1582,7 +1598,7 @@ export default function App() {
           </div>
         )}
         <footer className="footer">
-          <p className="muted">ind toktok — الإصدار 24</p>
+          <p className="muted">ind toktok — الإصدار 25</p>
         </footer>
       </div>
     )
@@ -1626,7 +1642,7 @@ export default function App() {
             <button className="link-btn" onClick={() => chooseRole('passenger')}>تبديل — أنا راكب</button>
           </div>
         )}
-        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 24</p>
+        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 25</p>
       </footer>
     </div>
   )

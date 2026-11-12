@@ -34,6 +34,8 @@ export interface DriverProfile {
   debt: number
   /** إجمالي ما سدده السواق — متزامن عبر مستند السواق في Firestore */
   totalPaid: number
+  /** رصيد السواق في المحفظة — لو سدّد أكتر من مديونيته الزيادة بتتحفظ هنا، وعمولات الرحلات الجاية بتتخصم منها الأول قبل ما تتسجل مديونية */
+  balance: number
   /** صورة البطاقة: Data URL مضغوطة (JPEG) مخزنة داخل مستند Firestore — بدون Storage */
   idCardUrl: string | null
   /** صورة شخصية (Data URL مضغوطة) تظهر للعميل — غير صورة البطاقة */

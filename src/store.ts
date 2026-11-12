@@ -46,6 +46,7 @@ export function defaultDriver(): DriverProfile {
     ratingCount: 0,
     debt: 0,
     totalPaid: 0,
+    balance: 0,
     idCardUrl: null,
     idCardStatus: 'none',
     photoUrl: null,
