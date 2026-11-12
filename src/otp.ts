@@ -272,15 +272,13 @@ export async function sendOtpCode(phone: string): Promise<OtpSendResult> {
     }
   }
 
-  const auth = getFirebaseAuth()
-  if (!auth) {
-    return { ok: false, remaining: 0, message: 'Firebase Auth مش متاح دلوقتي — حاول تاني.' }
-  }
-
   // --- أندرويد: تحقق أصلي (Native) عبر إضافة Capacitor Firebase ---
   // في الإضافة v8: signInWithPhoneNumber لا ترجع verificationId مباشرة،
   // بل ترسل أحداث: phoneCodeSent (فيه verificationId) أو
   // phoneVerificationCompleted (تحقق فوري/تلقائي) أو phoneVerificationFailed.
+  // ملحوظة: المسار الأصلي مش محتاج نسخة Auth من JS SDK أصلاً — الإضافة
+  // الأصلية بتتعامل مع Firebase مباشرة، فمش بنستدعي getFirebaseAuth هنا
+  // عشان أي مشكلة في JS SDK ما توقّفش إرسال الكود.
   if (Capacitor.isNativePlatform()) {
     let outcome: Awaited<ReturnType<typeof nativeSendOtp>>
     try {
@@ -334,6 +332,11 @@ export async function sendOtpCode(phone: string): Promise<OtpSendResult> {
   }
 
   // --- الويب: signInWithPhoneNumber مع reCAPTCHA مخفي ---
+  // مسار الويب بس هو اللي محتاج نسخة Auth من JS SDK
+  const auth = getFirebaseAuth()
+  if (!auth) {
+    return { ok: false, remaining: 0, message: 'Firebase Auth مش متاح دلوقتي — حاول تاني.' }
+  }
   try {
     if (!verifier) {
       verifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
