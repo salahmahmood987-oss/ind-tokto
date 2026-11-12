@@ -211,6 +211,10 @@ export default function App() {
   const myPastRides = state.rides
     .filter((r) => r.driverCode === state.driver.code && (r.status === 'completed' || r.status === 'cancelled'))
     .sort((a, b) => b.createdAt - a.createdAt)
+  // طلبات العميل (كل حالاتها) — الأحدث أولاً
+  const myPassengerRides = state.rides
+    .filter((r) => state.passenger && r.passengerCode === state.passenger.code)
+    .sort((a, b) => b.createdAt - a.createdAt)
 
   // ---- طلب إذن الموقع فور فتح التطبيق ----
   // أول ما التطبيق يفتح نطلب إذن الموقع من النظام، ولو اتوافق عليه
@@ -839,47 +843,34 @@ export default function App() {
     </div>
   )
 
+  // نموذج التسجيل برقم التليفون — مشترك بين الرئيسية والملف الشخصي
+  const registrationForm = (
+    <div className="box">
+      <h3>التسجيل برقم التليفون — مرة واحدة بس</h3>
+      <input placeholder="الاسم" value={regName} onChange={(e) => setRegName(e.target.value)} />
+      <input placeholder="رقم التليفون (11 رقم)" inputMode="tel" value={regPhone} onChange={(e) => setRegPhone(e.target.value)} />
+      {/* reCAPTCHA مخفي — Firebase Phone Auth بيحتاجه على الويب */}
+      <div id="recaptcha-container" />
+      {!otpSent ? (
+        <button className="btn" onClick={requestOtp} disabled={otpBusy}>{otpBusy ? 'بيبعت الكود…' : 'ابعت كود التحقق'}</button>
+      ) : (
+        <div>
+          <input placeholder="الكود (6 أرقام)" inputMode="numeric" maxLength={6} value={otpInput} onChange={(e) => setOtpInput(e.target.value.replace(/[^0-9]/g, ''))} />
+          <button className="btn" onClick={verifyOtp} disabled={otpBusy}>{otpBusy ? 'بيتأكد…' : 'تأكيد الكود'}</button>
+          <p className="muted">📩 الكود اتبعت في رسالة SMS على رقمك — اكتب الكود اللي وصلك، ومش بيظهر جوه التطبيق.</p>
+          <p className="muted">حد إرسال الكود: {OTP_MAX_PER_HOUR} أكواد في الساعة لكل رقم — فاضل {otpRemaining(regPhone.trim())} من {OTP_MAX_PER_HOUR} (حد Firebase: 10 رسايل SMS في اليوم لحد ما تضيف فوترة للمشروع).</p>
+          <button className="link-btn" onClick={() => { setOtpSent(false); setOtpInput('') }}>تغيير الرقم / طلب كود جديد</button>
+        </div>
+      )}
+      {state.passenger && <button className="link-btn" onClick={() => setEditingPhone(false)}>إلغاء</button>}
+    </div>
+  )
+
+  // الصفحة الرئيسية للعميل: إنشاء طلب فقط
   const passengerView = (
     <div className="card">
       <h2><span className="icon-chip"><IconUser /></span>اطلب توكتوك</h2>
-      {!state.passenger || editingPhone ? (
-        <div className="box">
-          <h3>التسجيل برقم التليفون — مرة واحدة بس</h3>
-          <input placeholder="الاسم" value={regName} onChange={(e) => setRegName(e.target.value)} />
-          <input placeholder="رقم التليفون (11 رقم)" inputMode="tel" value={regPhone} onChange={(e) => setRegPhone(e.target.value)} />
-          {/* reCAPTCHA مخفي — Firebase Phone Auth بيحتاجه على الويب */}
-          <div id="recaptcha-container" />
-          {!otpSent ? (
-            <button className="btn" onClick={requestOtp} disabled={otpBusy}>{otpBusy ? 'بيبعت الكود…' : 'ابعت كود التحقق'}</button>
-          ) : (
-            <div>
-              <input placeholder="الكود (6 أرقام)" inputMode="numeric" maxLength={6} value={otpInput} onChange={(e) => setOtpInput(e.target.value.replace(/[^0-9]/g, ''))} />
-              <button className="btn" onClick={verifyOtp} disabled={otpBusy}>{otpBusy ? 'بيتأكد…' : 'تأكيد الكود'}</button>
-              <p className="muted">📩 الكود اتبعت في رسالة SMS على رقمك — اكتب الكود اللي وصلك، ومش بيظهر جوه التطبيق.</p>
-              <p className="muted">حد إرسال الكود: {OTP_MAX_PER_HOUR} أكواد في الساعة لكل رقم — فاضل {otpRemaining(regPhone.trim())} من {OTP_MAX_PER_HOUR} (حد Firebase: 10 رسايل SMS في اليوم لحد ما تضيف فوترة للمشروع).</p>
-              <button className="link-btn" onClick={() => { setOtpSent(false); setOtpInput('') }}>تغيير الرقم / طلب كود جديد</button>
-            </div>
-          )}
-          {state.passenger && <button className="link-btn" onClick={() => setEditingPhone(false)}>إلغاء</button>}
-        </div>
-      ) : (
-        <div className="saved-bar">
-          <IconUser /> {state.passenger.name} — {state.passenger.phone} — كودك: <b>{state.passenger.code}</b> <IconCheck /> موثق
-          <button className="link-btn" onClick={() => { setRegName(state.passenger?.name || ''); setRegPhone(state.passenger?.phone || ''); setEditingPhone(true) }}>تعديل الرقم</button>
-        </div>
-      )}
-
-      {state.passenger && !editingPhone && (
-        <div className="profile-box">
-          {avatar(state.passenger.photoUrl, state.passenger.name)}
-          <div>
-            <b>ملفي الشخصي — {state.passenger.name}</b>
-            <p className="muted">صورتك بتظهر للكابتن لما تطلب رحلة</p>
-            <input type="file" accept="image/*" onChange={(e) => setProfilePhotoFile(e.target.files?.[0] || null)} />
-            <button className="btn small" onClick={() => uploadProfilePhoto('passenger')} disabled={!profilePhotoFile}>حفظ صورتي</button>
-          </div>
-        </div>
-      )}
+      {(!state.passenger || editingPhone) && registrationForm}
 
       <div className="grid">
         <div>
@@ -949,6 +940,52 @@ export default function App() {
           )}
         </div>
       )}
+    </div>
+  )
+
+  // الملف الشخصي للعميل: بياناته وصورته وكوده وتقييمه
+  const passengerProfileView = (
+    <div className="card">
+      <h2><span className="icon-chip"><IconUser /></span>الملف الشخصي</h2>
+      {!state.passenger || editingPhone ? registrationForm : (
+        <>
+          <div className="saved-bar">
+            <IconUser /> {state.passenger.name} — {state.passenger.phone} — كودك: <b>{state.passenger.code}</b> <IconCheck /> موثق
+            <button className="link-btn" onClick={() => { setRegName(state.passenger?.name || ''); setRegPhone(state.passenger?.phone || ''); setEditingPhone(true) }}>تعديل الرقم</button>
+          </div>
+          <div className="profile-box">
+            {avatar(state.passenger.photoUrl, state.passenger.name)}
+            <div>
+              <b>ملفي الشخصي — {state.passenger.name}</b>
+              <p className="muted">صورتك بتظهر للكابتن لما تطلب رحلة</p>
+              <input type="file" accept="image/*" onChange={(e) => setProfilePhotoFile(e.target.files?.[0] || null)} />
+              <button className="btn small" onClick={() => uploadProfilePhoto('passenger')} disabled={!profilePhotoFile}>حفظ صورتي</button>
+            </div>
+          </div>
+          <p>تقييمك: {state.passenger.ratingAvg} ★ ({state.passenger.ratingCount})</p>
+        </>
+      )}
+    </div>
+  )
+
+  // طلبات العميل: كل طلباته بحالتها وأوقاتها
+  const passengerTripsView = (
+    <div className="card">
+      <h2><span className="icon-chip"><IconList /></span>طلباتي</h2>
+      {myPassengerRides.length === 0 && <p>لسه معملتش أي طلبات.</p>}
+      {myPassengerRides.map((r) => (
+        <div key={r.orderNo} className="ride">
+          <b>{r.orderNo}</b> — {r.status === 'matched' || r.status === 'driver_arrived' || r.status === 'on_trip' ? (<>{avatar(r.driverPhotoUrl, r.driverName || 'الكابتن')} الكابتن {r.driverName}</>) : rideStatusLabel(r.status)} — <b>{money(r.fare)}</b>
+          <br />من: {r.pickup.label} — إلى: {r.destination.label}
+          {rideTimes(r)}
+          {r.status === 'completed' && r.passengerRatingForDriver === null && (
+            <div>
+              <p>قيّم الكابتن بعد الرحلة (تقييمك يظهر للعميل اللي بعده):</p>
+              {stars(rateDriver, (n) => { setRateDriver(n); submitRating(r.orderNo, 'passenger', n) })}
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   )
 
@@ -1035,7 +1072,7 @@ export default function App() {
           <button className="btn role-btn" onClick={() => chooseRole('driver')}><IconDriver /> أنا كابتن — عايز أشتغل</button>
         </div>
         <footer className="footer">
-          <p className="muted">ind toktok — الإصدار 13</p>
+          <p className="muted">ind toktok — الإصدار 14</p>
         </footer>
       </div>
     )
@@ -1047,6 +1084,13 @@ export default function App() {
         <img src={logoUrl} alt="ind toktok" className="logo" />
         <h1><span className="brand">ind toktok</span></h1>
       </header>
+      {appRole === 'passenger' && (
+        <nav className="tabs">
+          <button className={role === 'passenger' ? 'tab active' : 'tab'} onClick={() => setRole('passenger')}><IconPin />اطلب توكتوك</button>
+          <button className={role === 'myRequests' ? 'tab active' : 'tab'} onClick={() => setRole('myRequests')}><IconList />طلباتي</button>
+          <button className={role === 'profile' ? 'tab active' : 'tab'} onClick={() => setRole('profile')}><IconUser />الملف الشخصي</button>
+        </nav>
+      )}
       {appRole === 'driver' && (
         <nav className="tabs">
           <button className={role === 'driver' ? 'tab active' : 'tab'} onClick={() => setRole('driver')}><IconList />الطلبات</button>
@@ -1057,10 +1101,11 @@ export default function App() {
       )}
       {notice && <div className="notice">{notice}</div>}
       {role === 'passenger' && passengerView}
+      {role === 'myRequests' && passengerTripsView}
       {role === 'driver' && driverView}
       {role === 'trips' && driverTripsView}
       {role === 'wallet' && walletView}
-      {role === 'profile' && driverProfileView}
+      {role === 'profile' && (appRole === 'driver' ? driverProfileView : passengerProfileView)}
       {role === 'admin' && (<><button className="btn small" onClick={() => setRole('driver')}>← رجوع للسواق</button>{adminView}</>)}
       <footer className="footer">
         <p>آخر رحلة: {lastRide ? `${lastRide.orderNo} — ${lastRide.status}` : 'لسه مفيش رحلات'}</p>
@@ -1071,7 +1116,7 @@ export default function App() {
             <button className="link-btn" onClick={() => chooseRole('passenger')}>تبديل — أنا راكب</button>
           </div>
         )}
-        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 13</p>
+        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 14</p>
       </footer>
     </div>
   )
