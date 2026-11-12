@@ -299,11 +299,13 @@ export async function sendOtpCode(phone: string): Promise<OtpSendResult> {
     }
     if (outcome.kind === 'failed') {
       nativeVerificationId = null
+      // بنعرض رسالة Firebase الأصلية مع الرسالة العربية عشان نعرف السبب الدقيق
+      const raw = outcome.message ? ` (التفاصيل: ${outcome.message.slice(0, 220)})` : ''
       return {
         ok: false,
         remaining: OTP_MAX_PER_HOUR - recent.length,
         message: outcome.code
-          ? firebaseErrorMessage(outcome.code)
+          ? `${firebaseErrorMessage(outcome.code)}${raw}`
           : outcome.message,
       }
     }
