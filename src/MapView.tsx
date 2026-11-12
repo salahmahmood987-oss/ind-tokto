@@ -27,6 +27,23 @@ function pinIcon(color: string): L.DivIcon {
   })
 }
 
+// علامة الكابتن على الخريطة: توكتوك أخضر وأصفر وجواه واحد (راكب/سواق)
+function toktokIcon(): L.DivIcon {
+  return L.divIcon({
+    className: 'toktok-pin',
+    html: `<svg width="52" height="52" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
+      <path d="M10 22 Q10 8 24 8 Q38 8 38 22 L38 26 L10 26 Z" fill="#f59e0b" stroke="#fff" stroke-width="1.5"/>
+      <rect x="7" y="26" width="34" height="11" rx="4" fill="#16a34a" stroke="#fff" stroke-width="1.5"/>
+      <circle cx="24" cy="19" r="4.5" fill="#78350f" stroke="#fff" stroke-width="1"/>
+      <path d="M17 27 Q24 21 31 27 L31 27 L17 27 Z" fill="#78350f"/>
+      <circle cx="15" cy="38" r="5.5" fill="#1f2937" stroke="#fff" stroke-width="1.5"/><circle cx="15" cy="38" r="2" fill="#fff"/>
+      <circle cx="33" cy="38" r="5.5" fill="#1f2937" stroke="#fff" stroke-width="1.5"/><circle cx="33" cy="38" r="2" fill="#fff"/>
+    </svg>`,
+    iconSize: [52, 52],
+    iconAnchor: [26, 48],
+  })
+}
+
 export default function MapView({
   pickup,
   destination,
@@ -87,7 +104,7 @@ export default function MapView({
     }
     if (driver) {
       markersRef.current.push(
-        L.marker([driver.lat, driver.lng], { icon: pinIcon('#f59e0b') })
+        L.marker([driver.lat, driver.lng], { icon: toktokIcon() })
           .addTo(map)
           .bindPopup(`الكابتن: ${driver.label}`),
       )

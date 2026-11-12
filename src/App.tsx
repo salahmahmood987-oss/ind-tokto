@@ -10,7 +10,6 @@ import { otpRemaining, sendOtpCode, verifyOtpCode } from './otp'
 import {
   clientCodeForPhone,
   commissionFor,
-  DEMO_DRIVERS,
   defaultState,
   isDebtBlocked,
   loadState,
@@ -45,6 +44,25 @@ function stars(value: number, onRate?: (n: number) => void) {
 
 function money(n: number) {
   return `${n} ج.م`
+}
+
+/** أسباب إلغاء السواق للرحلة — آخر اختيار "سبب آخر" بيفتح خانة كتابة. */
+const CANCEL_REASONS = [
+  'العميل مش بيرد على التليفون',
+  'نقطة الركوب بعيدة',
+  'العميل طلب الإلغاء',
+  'عطل في التوكتوك',
+  'سبب آخر…',
+]
+/** المسافة بالكيلومتر بين نقطتين (صيغة هافرساين) — رقم واحد بعد العلامة. */
+function distanceKm(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+  const R = 6371
+  const dLat = ((b.lat - a.lat) * Math.PI) / 180
+  const dLng = ((b.lng - a.lng) * Math.PI) / 180
+  const la1 = (a.lat * Math.PI) / 180
+  const la2 = (b.lat * Math.PI) / 180
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dLng / 2) ** 2
+  return Math.round(2 * R * Math.asin(Math.sqrt(h)) * 10) / 10
 }
 
 function fmtTime(ts: number | null | undefined): string {
@@ -265,6 +283,14 @@ export default function App() {
   // التقييم
   const [rateDriver, setRateDriver] = useState(0)
   const [ratePassenger, setRatePassenger] = useState(0)
+  // المفاوضة على السعر: سعر العرض اللي بيكتبه السواق لكل طلب (حسب رقم الطلب)
+  const [offerPrices, setOfferPrices] = useState<Record<string, string>>({})
+  // سعرك المقترح الجديد وأنت مستني عروض (العميل يقدر يرفعه أثناء البحث)
+  const [counterFareText, setCounterFareText] = useState('')
+  // إلغاء السواق: الطلب اللي بيتلغي + السبب المختار + نص "سبب آخر"
+  const [cancelTarget, setCancelTarget] = useState<string | null>(null)
+  const [cancelReason, setCancelReason] = useState('')
+  const [cancelReasonOther, setCancelReasonOther] = useState('')
   const stateRef = useRef(state)
   stateRef.current = state
 
@@ -539,6 +565,7 @@ export default function App() {
       status: 'searching',
       driverCode: null,
       driverName: null,
+      driverPhone: null,
       driverLat: null,
       driverLng: null,
       driverLocAt: null,
@@ -547,6 +574,8 @@ export default function App() {
       acceptedAt: null,
       arrivedAt: null,
       completedAt: null,
+      cancelReason: null,
+      cancelledBy: null,
       passengerPhotoUrl: state.passenger?.photoUrl ?? null,
       driverPhotoUrl: null,
       passengerRatingForDriver: null,
@@ -555,34 +584,6 @@ export default function App() {
     update({ rides: [...state.rides, ride], lastOrderNum: orderNum })
     void saveDoc('rides', ride.orderNo, ride as unknown as Record<string, unknown>)
     showNotice(`طلبك ${ride.orderNo} اتبعت للسواقين القريبين.`)
-    // عروض تجريبية من السواقين (في Firebase الحقيقي تأتي من السواقين فعلاً)
-    DEMO_DRIVERS.forEach((d, i) => {
-      setTimeout(() => {
-        setState((s) => {
-          const r = s.rides.find((x) => x.orderNo === ride.orderNo)
-          if (!r || r.status !== 'searching') return s
-          const offer: Offer = {
-            id: `${ride.orderNo}-${d.code}`,
-            rideId: ride.orderNo,
-            driverCode: d.code,
-            driverName: d.name,
-            driverRating: d.rating,
-            driverPhotoUrl: null,
-            price: Math.max(FARE_MIN, fare + (i === 0 ? 0 : i * 5)),
-            etaMinutes: 3 + i * 2,
-            plate: d.plate,
-            color: d.color,
-            model: d.model,
-          }
-          return {
-            ...s,
-            rides: s.rides.map((x) =>
-              x.orderNo === ride.orderNo ? { ...x, offers: [...x.offers, offer] } : x,
-            ),
-          }
-        })
-      }, 2000 + i * 1500)
-    })
     } finally {
       setRequestBusy(false)
     }
@@ -592,8 +593,11 @@ export default function App() {
     const updated: Ride = {
       ...ride,
       status: 'matched',
+      // السعر المتفق عليه هو سعر العرض اللي اختاره العميل (مش سعره الأصلي)
+      fare: offer.price,
       driverCode: offer.driverCode,
       driverName: offer.driverName,
+      driverPhone: offer.driverPhone,
       driverLat: ride.pickup.lat + 0.012,
       driverLng: ride.pickup.lng + 0.012,
       driverLocAt: Date.now(),
@@ -603,6 +607,50 @@ export default function App() {
     update({ rides: state.rides.map((r) => (r.orderNo === ride.orderNo ? updated : r)) })
     void saveDoc('rides', ride.orderNo, updated as unknown as Record<string, unknown>)
     showNotice(`الكابتن ${offer.driverName} في الطريق إليك.`)
+  }
+
+  /** السواق يبعت عرض بسعره (مفاوضة) — السعر اللي يكتبه هو عرضه للعميل. */
+  function sendDriverOffer(ride: Ride, price: number) {
+    const offer: Offer = {
+      id: `${ride.orderNo}-${state.driver.code}`,
+      rideId: ride.orderNo,
+      driverCode: state.driver.code,
+      driverName: state.driver.name || 'الكابتن',
+      driverPhone: state.driver.phone,
+      driverRating: state.driver.ratingAvg,
+      driverPhotoUrl: state.driver.photoUrl ?? null,
+      price,
+      etaMinutes: 5,
+      plate: state.driver.plate,
+      color: state.driver.color,
+      model: state.driver.model,
+    }
+    const updatedRide: Ride = { ...ride, offers: [...ride.offers.filter((o) => o.driverCode !== state.driver.code), offer] }
+    update({ rides: state.rides.map((x) => x.orderNo === ride.orderNo ? updatedRide : x) })
+    void saveDoc('rides', ride.orderNo, updatedRide as unknown as Record<string, unknown>)
+    showNotice(price === ride.fare ? 'قبلت بالسعر — عرضك اتبعت للعميل.' : `عرضك (${money(price)}) اتبعت للعميل.`)
+  }
+
+  /** العميل يحدّث سعره المقترح وهو مستني عروض (يرفعه عشان يجذب سواقين). */
+  function updatePassengerFare(ride: Ride, newFare: number) {
+    if (ride.status !== 'searching') return
+    const updated: Ride = { ...ride, fare: newFare }
+    update({ rides: state.rides.map((r) => (r.orderNo === ride.orderNo ? updated : r)) })
+    void saveDoc('rides', ride.orderNo, updated as unknown as Record<string, unknown>)
+    showNotice(`سعرك المقترح بقى ${money(newFare)} — السواقين هيشوفوه.`)
+  }
+
+  /** إلغاء رحلة مع سبب — السبب بيظهر للطرف التاني وفي السجل. */
+  function cancelRide(orderNo: string, reason: string, by: 'driver' | 'passenger') {
+    const ride = state.rides.find((r) => r.orderNo === orderNo)
+    if (!ride) return
+    const next: Ride = { ...ride, status: 'cancelled', cancelReason: reason, cancelledBy: by }
+    update({ rides: state.rides.map((r) => (r.orderNo === orderNo ? next : r)) })
+    void saveDoc('rides', orderNo, next as unknown as Record<string, unknown>)
+    setCancelTarget(null)
+    setCancelReason('')
+    setCancelReasonOther('')
+    showNotice('الرحلة اتلغت.')
   }
 
   function setRideStatus(orderNo: string, status: Ride['status']) {
@@ -877,14 +925,22 @@ export default function App() {
           <br />إلى: {r.destination.label}
           <br />السعر المقترح: <b>{money(r.fare)}</b>
           <br />وقت الطلب: {fmtTime(r.createdAt)}
-          <br />
-          <button className="btn" disabled={isDebtBlocked(state.debt) || !state.driver.online} onClick={() => {
-            const offer: Offer = { id: `${r.orderNo}-${state.driver.code}`, rideId: r.orderNo, driverCode: state.driver.code, driverName: state.driver.name || 'الكابتن', driverRating: state.driver.ratingAvg, driverPhotoUrl: state.driver.photoUrl ?? null, price: r.fare, etaMinutes: 5, plate: state.driver.plate, color: state.driver.color, model: state.driver.model }
-            const updatedRide: Ride = { ...r, offers: [...r.offers, offer] }
-            update({ rides: state.rides.map((x) => x.orderNo === r.orderNo ? updatedRide : x) })
-            void saveDoc('rides', r.orderNo, updatedRide as unknown as Record<string, unknown>)
-            showNotice('عرضك اتبعت للعميل.')
-          }}>اقبل بالسعر ({money(r.fare)})</button>
+          {r.offers.filter((o) => o.driverCode === state.driver.code).map((o) => (
+            <p key={o.id} className="muted">عرضك: <b>{money(o.price)}</b> — مستني العميل يختار.</p>
+          ))}
+          <div className="row">
+            <input
+              className="fare-number"
+              inputMode="numeric"
+              style={{ width: 90 }}
+              value={offerPrices[r.orderNo] ?? String(r.fare)}
+              onChange={(e) => setOfferPrices({ ...offerPrices, [r.orderNo]: e.target.value.replace(/[^0-9]/g, '') })}
+              aria-label="سعرك"
+            />
+            <span>جنيه</span>
+            <button className="btn" disabled={isDebtBlocked(state.debt) || !state.driver.online} onClick={() => sendDriverOffer(r, Math.min(FARE_MAX, Math.max(FARE_MIN, parseInt(offerPrices[r.orderNo] || String(r.fare), 10) || r.fare)))}>ابعت عرضي</button>
+          </div>
+          <button className="btn" disabled={isDebtBlocked(state.debt) || !state.driver.online} onClick={() => sendDriverOffer(r, r.fare)}>اقبل بالسعر ({money(r.fare)})</button>
         </div>
       ))}
     </div>
@@ -901,13 +957,34 @@ export default function App() {
           <br />من: {myCurrentRide.pickup.label} — إلى: {myCurrentRide.destination.label}
           <br />
           <a className="link" target="_blank" rel="noreferrer" href={`https://www.google.com/maps/dir/?api=1&destination=${myCurrentRide.pickup.lat},${myCurrentRide.pickup.lng}`}>الاتجاهات لنقطة الركوب ↗</a>
+          {myCurrentRide.driverLat && myCurrentRide.driverLng && (
+            <p className="muted">العميل على بعد {distanceKm({ lat: myCurrentRide.driverLat, lng: myCurrentRide.driverLng }, myCurrentRide.pickup)} كم منك</p>
+          )}
+          <a className="btn" href={`tel:${myCurrentRide.passengerPhone}`}>📞 اتصل بالعميل — {myCurrentRide.passengerPhone}</a>
           {rideTimes(myCurrentRide)}
           <div className="row">
             {myCurrentRide.status === 'matched' && <button className="btn" onClick={() => setRideStatus(myCurrentRide.orderNo, 'driver_arrived')}>وصلت للعميل</button>}
             {myCurrentRide.status === 'driver_arrived' && <button className="btn" onClick={() => setRideStatus(myCurrentRide.orderNo, 'on_trip')}>ابدأ الرحلة</button>}
             {myCurrentRide.status === 'on_trip' && <button className="btn" onClick={() => setRideStatus(myCurrentRide.orderNo, 'completed')}>وصلنا — إنهاء الرحلة</button>}
-            <button className="btn danger" onClick={() => { if (confirm('متأكد؟ هتلغي الرحلة دي.')) setRideStatus(myCurrentRide.orderNo, 'cancelled') }}>إلغاء الرحلة</button>
+            <button className="btn danger" onClick={() => setCancelTarget(myCurrentRide.orderNo)}>إلغاء الرحلة</button>
           </div>
+          {cancelTarget === myCurrentRide.orderNo && (
+            <div className="box">
+              <h3>سبب الإلغاء</h3>
+              {CANCEL_REASONS.map((reason) => (
+                <label key={reason} className="row">
+                  <input type="radio" name="cancel-reason" checked={cancelReason === reason} onChange={() => setCancelReason(reason)} /> {reason}
+                </label>
+              ))}
+              {cancelReason === 'سبب آخر…' && (
+                <input placeholder="اكتب السبب" value={cancelReasonOther} onChange={(e) => setCancelReasonOther(e.target.value)} />
+              )}
+              <div className="row">
+                <button className="btn danger" disabled={!cancelReason || (cancelReason === 'سبب آخر…' && !cancelReasonOther.trim())} onClick={() => cancelRide(myCurrentRide.orderNo, cancelReason === 'سبب آخر…' ? cancelReasonOther.trim() : cancelReason, 'driver')}>تأكيد الإلغاء</button>
+                <button className="link-btn" onClick={() => { setCancelTarget(null); setCancelReason(''); setCancelReasonOther('') }}>رجوع</button>
+              </div>
+            </div>
+          )}
         </div>
       ) : (
         <p>مفيش رحلة شغالة دلوقتي.</p>
@@ -918,6 +995,7 @@ export default function App() {
         <div key={r.orderNo} className="ride">
           {avatar(r.passengerPhotoUrl, r.passengerName)} <b>{r.orderNo}</b> — {r.passengerName} — {rideStatusLabel(r.status)} — <b>{money(r.fare)}</b>
           {rideTimes(r)}
+          {r.status === 'cancelled' && r.cancelReason && <p className="muted">سبب الإلغاء: {r.cancelReason}</p>}
           {r.status === 'completed' && r.driverRatingForPassenger === null && (
             <div>
               <p>قيّم العميل بعد الرحلة:</p>
@@ -1005,73 +1083,111 @@ export default function App() {
       <h2><span className="icon-chip"><IconUser /></span>اطلب توكتوك</h2>
       {(!state.passenger || editingPhone) && registrationForm}
 
-      <div className="grid">
-        <div>
-          <label>نقطة الركوب</label>
-          <input placeholder="منين؟" value={pickupLabel} onChange={(e) => setPickupLabel(e.target.value)} />
-          <div className="row">
-            <button className="btn small" onClick={() => useMyLocation('pickup')}><IconPin /> موقعي الحالي</button>
-            <button className={pickMode === 'pickup' ? 'btn small active' : 'btn small'} onClick={() => setPickMode('pickup')}>حدّد على الخريطة</button>
+      {activeRide ? (
+        <>
+          <MapView
+            pickup={activeRide.pickup}
+            destination={activeRide.destination}
+            driver={activeRide.driverLat && activeRide.driverLng ? { lat: activeRide.driverLat, lng: activeRide.driverLng, label: activeRide.driverName || 'الكابتن' } : null}
+            pickMode="view"
+            onPick={() => {}}
+          />
+          <div className="ride">
+            <b>{activeRide.orderNo}</b> — {rideStatusLabel(activeRide.status)}
+            {rideTimes(activeRide)}
+            {activeRide.status === 'searching' && (
+              <>
+                <p>بندور على سواقين… سعرك المقترح: <b>{money(activeRide.fare)}</b></p>
+                <div className="row">
+                  <input className="fare-number" inputMode="numeric" style={{ width: 90 }} value={counterFareText} placeholder={String(activeRide.fare)} onChange={(e) => setCounterFareText(e.target.value.replace(/[^0-9]/g, ''))} aria-label="سعرك المقترح الجديد" />
+                  <span>جنيه</span>
+                  <button className="btn" onClick={() => { const v = parseInt(counterFareText, 10); if (v >= FARE_MIN && v <= FARE_MAX) { updatePassengerFare(activeRide, v); setCounterFareText('') } else showNotice(`السعر من ${FARE_MIN} لـ ${FARE_MAX} جنيه.`) }}>حدّث سعري</button>
+                </div>
+                {activeRide.offers.length === 0 && <p className="muted">لسه مفيش عروض — السواقين هيبعتوا أسعارهم هنا.</p>}
+                {activeRide.offers.map((o) => (
+                  <div key={o.id} className="offer">
+                    {avatar(o.driverPhotoUrl, o.driverName)} <b>{o.driverName}</b> — {o.driverRating} ★ — {o.model} {o.color} ({o.plate}) — يوصل في {o.etaMinutes} دقيقة
+                    <br />السعر: <b>{money(o.price)}</b>
+                    <button className="btn" onClick={() => acceptOffer(activeRide, o)}>اختار الكابتن ده</button>
+                  </div>
+                ))}
+              </>
+            )}
+            {(activeRide.status === 'matched' || activeRide.status === 'driver_arrived' || activeRide.status === 'on_trip') && (
+              <>
+                <div className="profile-box">
+                  {avatar(activeRide.driverPhotoUrl, activeRide.driverName || 'الكابتن')}
+                  <div>
+                    <b>الكابتن {activeRide.driverName}</b> في الطريق إليك
+                    {activeRide.driverLat && activeRide.driverLng && (
+                      <p className="muted">على بعد {distanceKm({ lat: activeRide.driverLat, lng: activeRide.driverLng }, activeRide.pickup)} كم منك — موقعه مباشر على الخريطة 🛺</p>
+                    )}
+                    {activeRide.driverLocAt && <p className="muted">موقع السواق اتحدّث {new Date(activeRide.driverLocAt).toLocaleTimeString('ar-EG')}</p>}
+                  </div>
+                </div>
+                {activeRide.driverPhone && (
+                  <a className="btn" href={`tel:${activeRide.driverPhone}`}>📞 اتصل بالكابتن — {activeRide.driverPhone}</a>
+                )}
+              </>
+            )}
+            {activeRide.status === 'completed' && (
+              <div>
+                <p>قيّم الكابتن بعد الرحلة (تقييمك يظهر للعميل اللي بعده):</p>
+                {stars(rateDriver, (n) => { setRateDriver(n); submitRating(activeRide.orderNo, 'passenger', n) })}
+              </div>
+            )}
           </div>
-        </div>
-        <div>
-          <label>الوجهة</label>
-          <input placeholder="رايح فين؟" value={destLabel} onChange={(e) => setDestLabel(e.target.value)} />
-          <div className="row">
-            <button className="btn small" onClick={() => useMyLocation('destination')}><IconPin /> موقعي الحالي</button>
-            <button className={pickMode === 'destination' ? 'btn small active' : 'btn small'} onClick={() => setPickMode('destination')}>حدّد على الخريطة</button>
-          </div>
-        </div>
-      </div>
-
-      <MapView
-        pickup={pickup}
-        destination={destination}
-        driver={activeRide?.driverLat && activeRide?.driverLng ? { lat: activeRide.driverLat, lng: activeRide.driverLng, label: activeRide.driverName || 'الكابتن' } : null}
-        pickMode={pickMode}
-        onPick={onMapPick}
-      />
-      <p className="muted">دوس على الخريطة لتحديد {pickMode === 'pickup' ? 'نقطة الركوب' : pickMode === 'destination' ? 'الوجهة' : '—'} — أو استخدم زرار «موقعي الحالي».</p>
-
-      <h3>سعر المشوار</h3>
-      <div className="fare-stepper">
-        <button className="stepper-btn" onClick={() => setFareText(String(Math.max(FARE_MIN, fare - 5)))}>−</button>
-        <input
-          className="fare-number"
-          inputMode="numeric"
-          value={fareText}
-          onChange={(e) => {
-            const v = e.target.value.replace(/[^0-9]/g, '')
-            setFareText(v)
-          }}
-          onBlur={() => setFareText(String(fare))}
-          aria-label="سعر المشوار"
-        />
-        <span className="fare-unit">جنيه</span>
-        <button className="stepper-btn" onClick={() => setFareText(String(Math.min(FARE_MAX, fare + 5)))}>+</button>
-      </div>
-      <p className="muted">من {FARE_MIN} لـ {FARE_MAX} جنيه — دوس على الرقم نفسه وعدّله.</p>
-      <button className="btn big" onClick={requestRide} disabled={requestBusy}>{requestBusy ? 'بيحدد الأماكن…' : `اطلب توكتوك — ${money(fare)}`}</button>
-
-      {activeRide && (
-        <div className="ride">
-          <b>{activeRide.orderNo}</b> — {activeRide.status === 'searching' ? 'بندور على سواقين…' : activeRide.status === 'matched' ? (<>{avatar(activeRide.driverPhotoUrl, activeRide.driverName || 'الكابتن')} الكابتن {activeRide.driverName} في الطريق إليك</>) : activeRide.status}
-          {rideTimes(activeRide)}
-          {activeRide.driverLocAt && <p className="muted">موقع السواق اتحدّث {new Date(activeRide.driverLocAt).toLocaleTimeString('ar-EG')}</p>}
-          {activeRide.status === 'searching' && activeRide.offers.map((o) => (
-            <div key={o.id} className="offer">
-              {avatar(o.driverPhotoUrl, o.driverName)} <b>{o.driverName}</b> — {o.driverRating} ★ — {o.model} {o.color} ({o.plate}) — يوصل في {o.etaMinutes} دقيقة
-              <br />السعر: <b>{money(o.price)}</b>
-              <button className="btn" onClick={() => acceptOffer(activeRide, o)}>اختار الكابتن ده</button>
-            </div>
-          ))}
-          {activeRide.status === 'completed' && (
+        </>
+      ) : (
+        <>
+          <div className="grid">
             <div>
-              <p>قيّم الكابتن بعد الرحلة (تقييمك يظهر للعميل اللي بعده):</p>
-              {stars(rateDriver, (n) => { setRateDriver(n); submitRating(activeRide.orderNo, 'passenger', n) })}
+              <label>نقطة الركوب</label>
+              <input placeholder="منين؟" value={pickupLabel} onChange={(e) => setPickupLabel(e.target.value)} />
+              <div className="row">
+                <button className="btn small" onClick={() => useMyLocation('pickup')}><IconPin /> موقعي الحالي</button>
+                <button className={pickMode === 'pickup' ? 'btn small active' : 'btn small'} onClick={() => setPickMode('pickup')}>حدّد على الخريطة</button>
+              </div>
             </div>
-          )}
-        </div>
+            <div>
+              <label>الوجهة</label>
+              <input placeholder="رايح فين؟" value={destLabel} onChange={(e) => setDestLabel(e.target.value)} />
+              <div className="row">
+                <button className="btn small" onClick={() => useMyLocation('destination')}><IconPin /> موقعي الحالي</button>
+                <button className={pickMode === 'destination' ? 'btn small active' : 'btn small'} onClick={() => setPickMode('destination')}>حدّد على الخريطة</button>
+              </div>
+            </div>
+          </div>
+
+          <MapView
+            pickup={pickup}
+            destination={destination}
+            driver={null}
+            pickMode={pickMode}
+            onPick={onMapPick}
+          />
+          <p className="muted">دوس على الخريطة لتحديد {pickMode === 'pickup' ? 'نقطة الركوب' : pickMode === 'destination' ? 'الوجهة' : '—'} — أو استخدم زرار «موقعي الحالي».</p>
+
+          <h3>سعر المشوار</h3>
+          <div className="fare-stepper">
+            <button className="stepper-btn" onClick={() => setFareText(String(Math.max(FARE_MIN, fare - 5)))}>−</button>
+            <input
+              className="fare-number"
+              inputMode="numeric"
+              value={fareText}
+              onChange={(e) => {
+                const v = e.target.value.replace(/[^0-9]/g, '')
+                setFareText(v)
+              }}
+              onBlur={() => setFareText(String(fare))}
+              aria-label="سعر المشوار"
+            />
+            <span className="fare-unit">جنيه</span>
+            <button className="stepper-btn" onClick={() => setFareText(String(Math.min(FARE_MAX, fare + 5)))}>+</button>
+          </div>
+          <p className="muted">من {FARE_MIN} لـ {FARE_MAX} جنيه — دوس على الرقم نفسه وعدّله.</p>
+          <button className="btn big" onClick={requestRide} disabled={requestBusy}>{requestBusy ? 'بيحدد الأماكن…' : `اطلب توكتوك — ${money(fare)}`}</button>
+        </>
       )}
     </div>
   )
@@ -1112,6 +1228,7 @@ export default function App() {
           <b>{r.orderNo}</b> — {r.status === 'matched' || r.status === 'driver_arrived' || r.status === 'on_trip' ? (<>{avatar(r.driverPhotoUrl, r.driverName || 'الكابتن')} الكابتن {r.driverName}</>) : rideStatusLabel(r.status)} — <b>{money(r.fare)}</b>
           <br />من: {r.pickup.label} — إلى: {r.destination.label}
           {rideTimes(r)}
+          {r.status === 'cancelled' && r.cancelReason && <p className="muted">سبب الإلغاء: {r.cancelReason}</p>}
           {r.status === 'completed' && r.passengerRatingForDriver === null && (
             <div>
               <p>قيّم الكابتن بعد الرحلة (تقييمك يظهر للعميل اللي بعده):</p>
@@ -1237,7 +1354,7 @@ export default function App() {
           </div>
         )}
         <footer className="footer">
-          <p className="muted">ind toktok — الإصدار 17</p>
+          <p className="muted">ind toktok — الإصدار 18</p>
         </footer>
       </div>
     )
@@ -1281,7 +1398,7 @@ export default function App() {
             <button className="link-btn" onClick={() => chooseRole('passenger')}>تبديل — أنا راكب</button>
           </div>
         )}
-        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 17</p>
+        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 18</p>
       </footer>
     </div>
   )

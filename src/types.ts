@@ -52,6 +52,7 @@ export interface Offer {
   rideId: string
   driverCode: string
   driverName: string
+  driverPhone: string
   driverRating: number
   driverPhotoUrl: string | null
   price: number
@@ -74,6 +75,8 @@ export interface Ride {
   status: RideStatus
   driverCode: string | null
   driverName: string | null
+  /** رقم تليفون الكابتن — يظهر للعميل بعد قبول العرض */
+  driverPhone: string | null
   driverLat: number | null
   driverLng: number | null
   driverLocAt: number | null
@@ -85,6 +88,10 @@ export interface Ride {
   arrivedAt: number | null
   /** وقت نهاية الرحلة */
   completedAt: number | null
+  /** سبب الإلغاء (لو اتلغت) */
+  cancelReason: string | null
+  /** مين اللي لغى: السواق أو العميل */
+  cancelledBy: 'driver' | 'passenger' | null
   /** صورة العميل — تظهر للكابتن */
   passengerPhotoUrl: string | null
   /** صورة الكابتن — تظهر للعميل */
