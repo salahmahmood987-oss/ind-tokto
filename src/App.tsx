@@ -408,13 +408,47 @@ export default function App() {
     if (fresh.length > 0 && appRole === 'driver') ring()
   }, [state.rides, appRole])
 
-  // استرجاع بيانات العميل من Firestore لو اتمسحت من الموبايل (إعادة تثبيت):
-  // الاسم والصورة والتقييم بيرجعوا من نسخة السيرفر لما تكون القيم المحلية افتراضية
+  // استرجاع بيانات العميل لو اتمسحت من الموبايل (إعادة تثبيت):
+  // الرقم الموثق موجود أصلاً — فالملف بيتعمل فوراً من الرقم نفسه،
+  // والاسم والصورة والتقييم بييجوا من نسخة السيرفر لو موجودة.
+  // كده نموذج التسجيل ميرجعش يظهر تاني لرقم متوثق.
   useEffect(() => {
     const phone = verifiedPhones.passenger || state.passenger?.phone
-    if (!phone || !firebaseEnabled) return
+    if (!phone) return
     const p = state.passenger
-    if (p && p.name !== 'عميل' && p.photoUrl && p.ratingCount > 0) return
+    // مفيش ملف محلي أصلاً والرقم موثق: أنشئ الملف فوراً من الرقم
+    if (!p) {
+      const profile = {
+        name: 'عميل',
+        phone,
+        code: clientCodeForPhone(phone),
+        phoneVerified: true,
+        photoUrl: null as string | null,
+        ratingAvg: 0,
+        ratingCount: 0,
+      }
+      update({ passenger: profile })
+      if (firebaseEnabled) {
+        void loadDoc('passengers', phone).then((doc) => {
+          if (!doc) {
+            void saveDoc('passengers', phone, profile)
+            return
+          }
+          update({
+            passenger: {
+              ...profile,
+              name: (doc.name as string) || 'عميل',
+              photoUrl: (doc.photoUrl as string | null) ?? null,
+              ratingAvg: (doc.ratingAvg as number) ?? 0,
+              ratingCount: (doc.ratingCount as number) ?? 0,
+            },
+          })
+        })
+      }
+      return
+    }
+    if (!firebaseEnabled) return
+    if (p.name !== 'عميل' && p.photoUrl && p.ratingCount > 0) return
     let cancelled = false
     void loadDoc('passengers', phone).then((doc) => {
       if (cancelled || !doc) return
@@ -1081,7 +1115,7 @@ export default function App() {
   const passengerView = (
     <div className="card">
       <h2><span className="icon-chip"><IconUser /></span>اطلب توكتوك</h2>
-      {(!state.passenger || editingPhone) && registrationForm}
+      {editingPhone && registrationForm}
 
       {activeRide ? (
         <>
@@ -1196,7 +1230,9 @@ export default function App() {
   const passengerProfileView = (
     <div className="card">
       <h2><span className="icon-chip"><IconUser /></span>الملف الشخصي</h2>
-      {!state.passenger || editingPhone ? registrationForm : (
+      {editingPhone ? registrationForm : !state.passenger ? (
+        <p className="muted">جارٍ تجهيز ملفك…</p>
+      ) : (
         <>
           <div className="saved-bar">
             <IconUser /> {state.passenger.name} — {state.passenger.phone} — كودك: <b>{state.passenger.code}</b> <IconCheck /> موثق
@@ -1354,7 +1390,7 @@ export default function App() {
           </div>
         )}
         <footer className="footer">
-          <p className="muted">ind toktok — الإصدار 18</p>
+          <p className="muted">ind toktok — الإصدار 19</p>
         </footer>
       </div>
     )
@@ -1398,7 +1434,7 @@ export default function App() {
             <button className="link-btn" onClick={() => chooseRole('passenger')}>تبديل — أنا راكب</button>
           </div>
         )}
-        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 18</p>
+        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 19</p>
       </footer>
     </div>
   )
