@@ -1550,6 +1550,16 @@ export default function App() {
 
   // بوابة الدخول: اختيار الدور ← رقم التليفون ← كود التحقق (للسواق والعميل)
   const isVerified = appRole !== null && !!verifiedPhones[appRole]
+  // الإشعارات (أخطاء ورسايل) بتظهر مودال في نص الشاشة — مش شريط فوق
+  const noticeModal = notice ? (
+    <div className="notice-overlay" onClick={() => setNotice('')}>
+      <div className="notice-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="notice-icon">!</div>
+        <p>{notice}</p>
+        <button className="btn" onClick={() => setNotice('')}>تمام</button>
+      </div>
+    </div>
+  ) : null
   if (!isVerified) {
     return (
       <div className="app" dir="rtl">
@@ -1557,7 +1567,7 @@ export default function App() {
           <img src={logoUrl} alt="ind toktok" className="logo" />
           <h1><span className="brand">ind toktok</span></h1>
         </header>
-        {notice && <div className="notice">{notice}</div>}
+        {noticeModal}
         {appRole === null ? (
           <div className="card role-picker">
             <h2>أهلاً بيك في ind toktok</h2>
@@ -1572,7 +1582,7 @@ export default function App() {
           </div>
         )}
         <footer className="footer">
-          <p className="muted">ind toktok — الإصدار 23</p>
+          <p className="muted">ind toktok — الإصدار 24</p>
         </footer>
       </div>
     )
@@ -1599,7 +1609,7 @@ export default function App() {
           <button className={role === 'profile' ? 'tab active' : 'tab'} onClick={() => setRole('profile')}><IconUser />الملف الشخصي</button>
         </nav>
       )}
-      {notice && <div className="notice">{notice}</div>}
+      {noticeModal}
       {role === 'passenger' && passengerView}
       {role === 'myRequests' && passengerTripsView}
       {role === 'driver' && driverView}
@@ -1616,7 +1626,7 @@ export default function App() {
             <button className="link-btn" onClick={() => chooseRole('passenger')}>تبديل — أنا راكب</button>
           </div>
         )}
-        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 23</p>
+        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 24</p>
       </footer>
     </div>
   )
