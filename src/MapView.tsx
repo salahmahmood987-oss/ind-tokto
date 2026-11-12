@@ -12,6 +12,8 @@ interface MapViewProps {
   /** أي نقطة يتم تحديدها بالضغط على الخريطة */
   pickMode: MapMode
   onPick: (lat: number, lng: number) => void
+  /** ارتفاع الخريطة (بكسل أو vh) — الخرائط الرئيسية (hero) بتكون أطول */
+  height?: number | string
 }
 
 // وسط القاهرة كبداية افتراضية
@@ -50,6 +52,7 @@ export default function MapView({
   driver,
   pickMode,
   onPick,
+  height = 300,
 }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<L.Map | null>(null)
@@ -118,7 +121,7 @@ export default function MapView({
     <div
       ref={containerRef}
       className="map-box"
-      style={{ height: 300, width: '100%', borderRadius: 12, zIndex: 0 }}
+      style={{ height, width: '100%', borderRadius: 12, zIndex: 0 }}
     />
   )
 }

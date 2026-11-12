@@ -1136,32 +1136,9 @@ export default function App() {
       <h3>رحلتي الحالية</h3>
       {myCurrentRide ? (
         <div className="request-card">
-          <div className="request-head">
-            {avatar(myCurrentRide.passengerPhotoUrl, myCurrentRide.passengerName)}
-            <div className="who">
-              <b>{myCurrentRide.passengerName}</b>
-              <div className="stars-line">{rideStatusLabel(myCurrentRide.status)}</div>
-            </div>
-            <span className="order-badge">{myCurrentRide.orderNo}</span>
-          </div>
-          <div className="request-route">
-            <div className="route-row">
-              <span className="route-ic green"><IconPin /></span>
-              <div>
-                <div className="route-label">نقطة الركوب</div>
-                <div className="route-value">{myCurrentRide.pickup.label}</div>
-              </div>
-            </div>
-            <div className="route-row">
-              <span className="route-ic orange"><IconPin /></span>
-              <div>
-                <div className="route-label">الوجهة</div>
-                <div className="route-value">{myCurrentRide.destination.label}</div>
-              </div>
-            </div>
-          </div>
-          <div style={{ padding: '0 16px 4px' }}>
+          <div className="map-hero-card">
             <MapView
+              height={340}
               pickup={myCurrentRide.pickup}
               destination={driverArrived ? myCurrentRide.destination : null}
               driver={state.driver.currentLat && state.driver.currentLng ? { lat: state.driver.currentLat, lng: state.driver.currentLng, label: 'أنت' } : null}
@@ -1169,6 +1146,31 @@ export default function App() {
               onPick={() => {}}
             />
           </div>
+          <div className="request-sheet">
+            <div className="request-head">
+              {avatar(myCurrentRide.passengerPhotoUrl, myCurrentRide.passengerName)}
+              <div className="who">
+                <b>{myCurrentRide.passengerName}</b>
+                <div className="stars-line">{rideStatusLabel(myCurrentRide.status)}</div>
+              </div>
+              <span className="order-badge">{myCurrentRide.orderNo}</span>
+            </div>
+            <div className="request-route">
+              <div className="route-row">
+                <span className="route-ic green"><IconPin /></span>
+                <div>
+                  <div className="route-label">نقطة الركوب</div>
+                  <div className="route-value">{myCurrentRide.pickup.label}</div>
+                </div>
+              </div>
+              <div className="route-row">
+                <span className="route-ic orange"><IconPin /></span>
+                <div>
+                  <div className="route-label">الوجهة</div>
+                  <div className="route-value">{myCurrentRide.destination.label}</div>
+                </div>
+              </div>
+            </div>
           <div className="request-actions">
             <a className="link" target="_blank" rel="noreferrer" href={`https://www.google.com/maps/dir/?api=1&destination=${myCurrentRide.pickup.lat},${myCurrentRide.pickup.lng}`}>الاتجاهات لنقطة الركوب ↗</a>
             {driverArrived && (
@@ -1207,6 +1209,7 @@ export default function App() {
               </div>
             </div>
           )}
+          </div>
         </div>
       ) : (
         <p>مفيش رحلة شغالة دلوقتي.</p>
@@ -1280,20 +1283,23 @@ export default function App() {
   // نموذج التسجيل برقم التليفون — مشترك بين الرئيسية والملف الشخصي
   // الصفحة الرئيسية للعميل: إنشاء طلب فقط
   const passengerView = (
-    <div className="card">
-      <h2><span className="icon-chip"><IconUser /></span>اطلب توكتوك</h2>
-
+    <>
       {activeRide ? (
         <>
-          <MapView
-            pickup={activeRide.pickup}
-            destination={activeRide.destination}
-            driver={activeRide.driverLat && activeRide.driverLng ? { lat: activeRide.driverLat, lng: activeRide.driverLng, label: activeRide.driverName || 'الكابتن' } : null}
-            pickMode="view"
-            onPick={() => {}}
-          />
-          <div className="ride">
-            <b>{activeRide.orderNo}</b> — {rideStatusLabel(activeRide.status)}
+          <div className="map-hero-full">
+            <MapView
+              height="46vh"
+              pickup={activeRide.pickup}
+              destination={activeRide.destination}
+              driver={activeRide.driverLat && activeRide.driverLng ? { lat: activeRide.driverLat, lng: activeRide.driverLng, label: activeRide.driverName || 'الكابتن' } : null}
+              pickMode="view"
+              onPick={() => {}}
+            />
+          </div>
+          <div className="card bottom-sheet">
+            <div className="sheet-handle" />
+            <h2><span className="icon-chip"><IconUser /></span>رحلتك — {activeRide.orderNo}</h2>
+            <p><b>{rideStatusLabel(activeRide.status)}</b></p>
             {rideTimes(activeRide)}
             {activeRide.status === 'searching' && (
               <>
@@ -1341,7 +1347,20 @@ export default function App() {
         </>
       ) : (
         <>
-          <div className="grid">
+          <div className="map-hero-full">
+            <MapView
+              height="54vh"
+              pickup={pickup}
+              destination={destination}
+              driver={null}
+              pickMode={pickMode}
+              onPick={onMapPick}
+            />
+          </div>
+          <div className="card bottom-sheet">
+            <div className="sheet-handle" />
+            <h2><span className="icon-chip"><IconUser /></span>اطلب توكتوك</h2>
+            <div className="grid">
             <div>
               <label>نقطة الركوب</label>
               <input placeholder="منين؟" value={pickupLabel} onChange={(e) => setPickupLabel(e.target.value)} />
@@ -1360,13 +1379,6 @@ export default function App() {
             </div>
           </div>
 
-          <MapView
-            pickup={pickup}
-            destination={destination}
-            driver={null}
-            pickMode={pickMode}
-            onPick={onMapPick}
-          />
           <p className="muted">دوس على الخريطة لتحديد {pickMode === 'pickup' ? 'نقطة الركوب' : pickMode === 'destination' ? 'الوجهة' : '—'} — أو استخدم زرار «موقعي الحالي».</p>
 
           <h3>سعر المشوار</h3>
@@ -1388,9 +1400,10 @@ export default function App() {
           </div>
           <p className="muted">من {FARE_MIN} لـ {FARE_MAX} جنيه — دوس على الرقم نفسه وعدّله.</p>
           <button className="btn big" onClick={requestRide} disabled={requestBusy}>{requestBusy ? 'بيحدد الأماكن…' : `اطلب توكتوك — ${money(fare)}`}</button>
+          </div>
         </>
       )}
-    </div>
+    </>
   )
 
   // الملف الشخصي للعميل: بياناته وصورته وكوده وتقييمه
@@ -1559,7 +1572,7 @@ export default function App() {
           </div>
         )}
         <footer className="footer">
-          <p className="muted">ind toktok — الإصدار 22</p>
+          <p className="muted">ind toktok — الإصدار 23</p>
         </footer>
       </div>
     )
@@ -1603,7 +1616,7 @@ export default function App() {
             <button className="link-btn" onClick={() => chooseRole('passenger')}>تبديل — أنا راكب</button>
           </div>
         )}
-        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 22</p>
+        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 23</p>
       </footer>
     </div>
   )

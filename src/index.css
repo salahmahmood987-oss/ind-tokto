@@ -148,3 +148,15 @@ label { font-weight: 700; font-size: 14px; }
 .avatar { box-shadow: 0 1px 0 rgba(255,255,255,.9) inset, 0 4px 10px rgba(15, 23, 42, 0.20), 0 1px 3px rgba(15, 23, 42, 0.15); }
 .icon-chip { box-shadow: 0 1px 0 rgba(255,255,255,.45) inset, 0 -2px 0 rgba(0,0,0,.15) inset, 0 6px 14px rgba(245, 158, 11, 0.4), 0 2px 5px rgba(15, 23, 42, 0.15); }
 .notice, .warn { box-shadow: var(--shadow-3d-sm); }
+
+/* ===== الخريطة على طريقة أوبر وإن درايف: خريطة بطول الشاشة + ورقة سفلية طافية ===== */
+/* خريطة hero بعرض الشاشة كامل — بتكسر حواف الحاوية (padding التطبيق 16px فوق و14px جناب) */
+.map-hero-full { position: relative; z-index: 1; margin: -16px -14px 0; }
+.map-hero-full .map-box { border: none; outline: none; border-radius: 0; margin: 0; box-shadow: none; }
+/* خريطة hero جوه كارت الطلب (الكارت نفسه overflow hidden وpadding صفر) */
+.map-hero-card { position: relative; z-index: 1; }
+.map-hero-card .map-box { border: none; outline: none; border-radius: 0; margin: 0; box-shadow: none; }
+/* الورقة السفلية الطافية فوق الخريطة — زي أوبر وإن درايف */
+.card.bottom-sheet { position: relative; z-index: 2; margin-top: -26px; border-radius: 28px; box-shadow: 0 -14px 30px rgba(15, 23, 42, 0.20), var(--shadow-3d); }
+.request-sheet { position: relative; z-index: 2; margin-top: -22px; background: #fff; border-radius: 24px 24px 0 0; box-shadow: 0 -12px 26px rgba(15, 23, 42, 0.18); }
+.sheet-handle { width: 52px; height: 5px; border-radius: 999px; background: #e2e8f0; margin: 0 auto 14px; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.15) inset; }
