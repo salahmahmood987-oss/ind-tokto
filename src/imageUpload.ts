@@ -28,7 +28,13 @@ export function dataUrlApproxBytes(dataUrl: string): number {
   return Math.floor(b64.length * 0.75)
 }
 
-function loadImage(file: File): Promise<HTMLImageElement> {
+/** يقرأ أبعاد أي صورة قابلة للرسم (عنصر img أو ImageBitmap). */
+function drawableSize(img: HTMLImageElement | ImageBitmap): [number, number] {
+  if ('naturalWidth' in img) return [img.naturalWidth, img.naturalHeight]
+  return [img.width, img.height]
+}
+
+function loadImageElement(file: File): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file)
     const img = new Image()
@@ -38,21 +44,40 @@ function loadImage(file: File): Promise<HTMLImageElement> {
     }
     img.onerror = () => {
       URL.revokeObjectURL(url)
-      reject(
-        new Error(
-          'مقدرناش نقرأ الصورة دي — جرّب صورة JPG عادية من الكاميرا أو المعرض.',
-        ),
-      )
+      reject(new Error('decode-failed'))
     }
     img.src = url
   })
 }
 
+/**
+ * يفك ترميز الصورة بأكتر من طريقة — بعض صور المعرض (HEIC باسم jpg،
+ * أو صور ضخمة جداً) بتفشل في الطريقة العادية:
+ * 1) createImageBitmap كامل، 2) createImageBitmap مع تصغير أثناء الفك
+ * (أخف على الذاكرة)، 3) عنصر Image مع blob URL.
+ */
+async function decodeImage(file: File): Promise<HTMLImageElement | ImageBitmap> {
+  if ('createImageBitmap' in window) {
+    try {
+      return await createImageBitmap(file)
+    } catch { /* جرّب اللي بعده */ }
+    try {
+      return await createImageBitmap(file, {
+        resizeWidth: 1000,
+        resizeHeight: 1000,
+        resizeQuality: 'high',
+      })
+    } catch { /* جرّب اللي بعده */ }
+  }
+  return loadImageElement(file)
+}
+
 /** يصغّر الصورة لأقصى ضلع ويحوّلها JPEG بالجودة المطلوبة. */
-function compress(img: HTMLImageElement, maxSide: number, quality: number): string {
-  const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight))
-  const width = Math.max(1, Math.round(img.naturalWidth * scale))
-  const height = Math.max(1, Math.round(img.naturalHeight * scale))
+function compress(img: HTMLImageElement | ImageBitmap, maxSide: number, quality: number): string {
+  const [naturalWidth, naturalHeight] = drawableSize(img)
+  const scale = Math.min(1, maxSide / Math.max(naturalWidth, naturalHeight))
+  const width = Math.max(1, Math.round(naturalWidth * scale))
+  const height = Math.max(1, Math.round(naturalHeight * scale))
   const canvas = document.createElement('canvas')
   canvas.width = width
   canvas.height = height
@@ -71,14 +96,30 @@ function compress(img: HTMLImageElement, maxSide: number, quality: number): stri
  * يرمي Error برسالة عربية لو الملف مش صورة أو فضل كبير بعد الضغط.
  */
 export async function preparePhotoForFirestore(file: File): Promise<string> {
-  if (!file.type.startsWith('image/')) {
+  const name = file.name.toLowerCase()
+  // صور HEIC من الآيفون (حتى لو اسمها jpg) المتصفح مش بيعرف يقرأها
+  if (name.endsWith('.heic') || name.endsWith('.heif')) {
+    throw new Error(
+      'الصورة دي بصيغة HEIC — حوّلها لـ JPG من إعدادات الكاميرا أو المعرض واختارها تاني.',
+    )
+  }
+  // بعض تطبيقات المعرض بترجع ملفات من غير نوع — منرفضش على طول، نحاول نقرأها
+  if (file.type && !file.type.startsWith('image/')) {
     throw new Error('اختار ملف صورة (JPG أو PNG) — الملف ده مش صورة.')
   }
   // حد أولي على حجم الملف الأصلي عشان ما نحاولش نضغط ملف ضخم جداً.
   if (file.size > 20 * 1024 * 1024) {
     throw new Error('الصورة كبيرة أوي (أكبر من 20 ميجا) — اختار صورة أصغر.')
   }
-  const img = await loadImage(file)
+  let img: HTMLImageElement | ImageBitmap
+  try {
+    img = await decodeImage(file)
+  } catch {
+    throw new Error(
+      'مقدرناش نقرأ الصورة دي — جرّب صورة JPG عادية من الكاميرا أو المعرض، ' +
+        'أو خد لقطة شاشة للصورة واختارها.',
+    )
+  }
   // محاولات متدرجة: نبدأ بجودة كويسة، ولو لسه كبيرة نقلل الحجم والجودة.
   const attempts: Array<[number, number]> = [
     [800, 0.7],

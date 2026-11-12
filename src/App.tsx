@@ -167,6 +167,33 @@ export default function App() {
     setAppRole(r)
     setRole(r)
   }
+  // الأرقام الموثقة بالـ OTP لكل دور — بتتحفظ على الجهاز، والدخول مش بيتم
+  // غير بعد اختيار الدور ← رقم التليفون ← كود التحقق (للسواق والعميل)
+  const [verifiedPhones, setVerifiedPhones] = useState<Record<string, string>>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('indtoktok-auth') || '{}') as Record<string, string>
+      if (saved.passenger || saved.driver) return saved
+      // ترحيل: رقم العميل اللي اتوثق بالـ OTP قبل كده يفضل موثق
+      const migrated: Record<string, string> = {}
+      if (state.passenger?.phoneVerified && state.passenger.phone) migrated.passenger = state.passenger.phone
+      return migrated
+    } catch {
+      return {}
+    }
+  })
+  function saveVerifiedPhones(v: Record<string, string>) {
+    setVerifiedPhones(v)
+    localStorage.setItem('indtoktok-auth', JSON.stringify(v))
+  }
+  /** يلغي توثيق رقم الكابتن — بيرجع شاشة التليفون والكود تاني. */
+  function clearDriverVerification() {
+    const next = { ...verifiedPhones }
+    delete next.driver
+    saveVerifiedPhones(next)
+    setRegPhone(state.driver.phone)
+    setOtpSent(false)
+    setOtpInput('')
+  }
   // نموذج بيانات الكابتن: ظاهر أول مرة لحد ما يملا بياناته ويدوس حفظ
   const [driverFormOpen, setDriverFormOpen] = useState(() => !state.driver.name.trim() || !state.driver.phone.trim())
   const [pickup, setPickup] = useState<LatLng | null>(null)
@@ -559,7 +586,7 @@ export default function App() {
       }
       // تحقق فوري (أندرويد): الرقم اتأكد من غير SMS — كمّل التسجيل على طول
       if (res.autoVerified) {
-        finishPhoneVerified()
+        finishAuth()
         showNotice(res.message)
         return
       }
@@ -589,24 +616,35 @@ export default function App() {
     }
   }
 
-  /** يحفظ ملف العميل بعد تأكيد رقمه (يستخدمه تأكيد الكود والتحقق الفوري). */
-  function finishPhoneVerified() {
+  /** يكمل الدخول بعد تأكيد الرقم — للسواق والعميل (يستخدمه تأكيد الكود والتحقق الفوري). */
+  function finishAuth() {
     const phone = regPhone.trim()
-    const profile = {
-      name: regName.trim() || 'عميل',
-      phone,
-      code: clientCodeForPhone(phone),
-      phoneVerified: true,
-      photoUrl: state.passenger?.photoUrl ?? null,
-      ratingAvg: 0,
-      ratingCount: 0,
+    const authRole: 'passenger' | 'driver' = appRole ?? 'passenger'
+    saveVerifiedPhones({ ...verifiedPhones, [authRole]: phone })
+    if (authRole === 'passenger') {
+      const prev = state.passenger
+      const samePhone = prev?.phone === phone
+      const profile = {
+        name: regName.trim() || prev?.name || 'عميل',
+        phone,
+        code: clientCodeForPhone(phone),
+        phoneVerified: true,
+        photoUrl: prev?.photoUrl ?? null,
+        ratingAvg: samePhone ? (prev?.ratingAvg ?? 0) : 0,
+        ratingCount: samePhone ? (prev?.ratingCount ?? 0) : 0,
+      }
+      update({ passenger: profile })
+      void saveDoc('passengers', phone, profile)
+      showNotice(`أهلاً ${profile.name}! رقمك اتأكد وكودك ${profile.code}.`)
+    } else {
+      const driver = { ...state.driver, phone }
+      update({ driver })
+      void saveDoc('drivers', driver.code, driver as unknown as Record<string, unknown>)
+      showNotice('رقمك اتأكد — أهلاً بيك يا كابتن!')
     }
-    update({ passenger: profile })
-    void saveDoc('passengers', phone, profile)
     setEditingPhone(false)
     setOtpSent(false)
     setOtpInput('')
-    showNotice(`أهلاً ${profile.name}! رقمك اتأكد وكودك ${profile.code}.`)
   }
 
   async function verifyOtp() {
@@ -617,7 +655,7 @@ export default function App() {
         showNotice(res.message)
         return
       }
-      finishPhoneVerified()
+      finishAuth()
     } finally {
       setOtpBusy(false)
     }
@@ -731,10 +769,15 @@ export default function App() {
   const driverView = (
     <div className="card">
       <h2><span className="icon-chip"><IconList /></span>الطلبات المتاحة</h2>
-      <label className="row">
-        <input type="checkbox" checked={state.driver.online} onChange={(e) => update({ driver: { ...state.driver, online: e.target.checked } })} />
-        متاح لاستقبال الرحلات
-      </label>
+      <button
+        className={`online-toggle ${state.driver.online ? 'on' : 'off'}`}
+        onClick={() => update({ driver: { ...state.driver, online: !state.driver.online } })}
+      >
+        <span className="switch"><span className="knob" /></span>
+        <span className="online-label">
+          {state.driver.online ? '🟢 متاح لقبول الطلبات' : '⚪ مش متاح للعمل — دوس عشان تستقبل طلبات'}
+        </span>
+      </button>
       <button className="link-btn" onClick={ring}>جرّب صوت التنبيه</button>
       {isDebtBlocked(state.debt) && (
         <p className="warn">⛔ وصلت لحد المديونية ({money(MAX_DEBT_EGP)}) — مش هتستقبل رحلات جديدة لحد ما تسدد.</p>
@@ -807,7 +850,10 @@ export default function App() {
         <>
           <div className="grid">
             <input placeholder="الاسم" value={state.driver.name} onChange={(e) => update({ driver: { ...state.driver, name: e.target.value } })} />
-            <input placeholder="رقم التليفون" value={state.driver.phone} onChange={(e) => update({ driver: { ...state.driver, phone: e.target.value } })} />
+            <input placeholder="رقم التليفون" value={state.driver.phone} readOnly={!!verifiedPhones.driver} onChange={(e) => update({ driver: { ...state.driver, phone: e.target.value } })} />
+            {verifiedPhones.driver && (
+              <p className="muted">رقمك موثق ✓ — <button className="link-btn" onClick={clearDriverVerification}>تغيير الرقم</button></p>
+            )}
             <input placeholder="رقم اللوحة" value={state.driver.plate} onChange={(e) => update({ driver: { ...state.driver, plate: e.target.value } })} />
             <input placeholder="اللون" value={state.driver.color} onChange={(e) => update({ driver: { ...state.driver, color: e.target.value } })} />
             <input placeholder="الموديل" value={state.driver.model} onChange={(e) => update({ driver: { ...state.driver, model: e.target.value } })} />
@@ -958,6 +1004,7 @@ export default function App() {
             <div>
               <b>ملفي الشخصي — {state.passenger.name}</b>
               <p className="muted">صورتك بتظهر للكابتن لما تطلب رحلة</p>
+              <input placeholder="الاسم" value={state.passenger.name} onChange={(e) => { if (state.passenger) update({ passenger: { ...state.passenger, name: e.target.value } }) }} />
               <input type="file" accept="image/*" onChange={(e) => setProfilePhotoFile(e.target.files?.[0] || null)} />
               <button className="btn small" onClick={() => uploadProfilePhoto('passenger')} disabled={!profilePhotoFile}>حفظ صورتي</button>
             </div>
@@ -1057,22 +1104,53 @@ export default function App() {
     </div>
   )
 
-  // شاشة اختيار الدور أول مرة — العميل مبيشوفش غير الراكب، والكابتن مبيشوفش غير السواق والمحفظة
-  if (appRole === null) {
+  // شاشة الدخول بالتليفون والكود — رقم التليفون أول حاجة بعد اختيار الدور
+  const phoneAuthForm = (
+    <div className="box">
+      <h3>{appRole === 'driver' ? 'تسجيل الكابتن' : 'تسجيل العميل'} — رقم التليفون</h3>
+      <p className="muted">هنبعتلك كود تحقق على رقمك — اكتبه صح عشان تدخل.</p>
+      <input placeholder="رقم التليفون (11 رقم)" inputMode="tel" value={regPhone} onChange={(e) => setRegPhone(e.target.value)} />
+      {/* reCAPTCHA مخفي — Firebase Phone Auth بيحتاجه على الويب */}
+      <div id="recaptcha-container" />
+      {!otpSent ? (
+        <button className="btn" onClick={requestOtp} disabled={otpBusy}>{otpBusy ? 'بيبعت الكود…' : 'ابعت كود التحقق'}</button>
+      ) : (
+        <div>
+          <input placeholder="الكود (6 أرقام)" inputMode="numeric" maxLength={6} value={otpInput} onChange={(e) => setOtpInput(e.target.value.replace(/[^0-9]/g, ''))} />
+          <button className="btn" onClick={verifyOtp} disabled={otpBusy}>{otpBusy ? 'بيتأكد…' : 'تأكيد الكود'}</button>
+          <p className="muted">📩 الكود اتبعت في رسالة SMS على رقمك — اكتب الكود اللي وصلك، ومش بيظهر جوه التطبيق.</p>
+          <p className="muted">حد إرسال الكود: {OTP_MAX_PER_HOUR} أكواد في الساعة لكل رقم.</p>
+          <button className="link-btn" onClick={() => { setOtpSent(false); setOtpInput('') }}>تغيير الرقم / طلب كود جديد</button>
+        </div>
+      )}
+    </div>
+  )
+
+  // بوابة الدخول: اختيار الدور ← رقم التليفون ← كود التحقق (للسواق والعميل)
+  const isVerified = appRole !== null && !!verifiedPhones[appRole]
+  if (!isVerified) {
     return (
       <div className="app" dir="rtl">
         <header className="header">
           <img src={logoUrl} alt="ind toktok" className="logo" />
           <h1><span className="brand">ind toktok</span></h1>
         </header>
-        <div className="card role-picker">
-          <h2>أهلاً بيك في ind toktok</h2>
-          <p className="muted">اختار هتستخدم التطبيق إزاي</p>
-          <button className="btn role-btn" onClick={() => chooseRole('passenger')}><IconUser /> أنا راكب — عايز توكتوك</button>
-          <button className="btn role-btn" onClick={() => chooseRole('driver')}><IconDriver /> أنا كابتن — عايز أشتغل</button>
-        </div>
+        {notice && <div className="notice">{notice}</div>}
+        {appRole === null ? (
+          <div className="card role-picker">
+            <h2>أهلاً بيك في ind toktok</h2>
+            <p className="muted">اختار هتستخدم التطبيق إزاي</p>
+            <button className="btn role-btn" onClick={() => chooseRole('passenger')}><IconUser /> أنا راكب — عايز توكتوك</button>
+            <button className="btn role-btn" onClick={() => chooseRole('driver')}><IconDriver /> أنا كابتن — عايز أشتغل</button>
+          </div>
+        ) : (
+          <div className="card">
+            {phoneAuthForm}
+            <button className="link-btn" onClick={() => { setAppRole(null); localStorage.removeItem('indtoktok-app-role'); setRole('passenger') }}>← تغيير الدور</button>
+          </div>
+        )}
         <footer className="footer">
-          <p className="muted">ind toktok — الإصدار 14</p>
+          <p className="muted">ind toktok — الإصدار 15</p>
         </footer>
       </div>
     )
@@ -1116,7 +1194,7 @@ export default function App() {
             <button className="link-btn" onClick={() => chooseRole('passenger')}>تبديل — أنا راكب</button>
           </div>
         )}
-        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 14</p>
+        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 15</p>
       </footer>
     </div>
   )
