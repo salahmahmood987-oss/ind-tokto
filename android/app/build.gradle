@@ -16,7 +16,22 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    // مفتاح توقيع debug ثابت في الريبو (debug.keystore) عشان بصمة SHA-1
+    // تبقى ثابتة في كل بناء سحابي، وتتسجل مرة واحدة في Firebase
+    // (مطلوبة للتحقق من التطبيق في Phone Auth الأصلي). كلمة السر
+    // الافتراضية android هي نفسها اللي بيولدها Android SDK لأي مفتاح debug.
+    signingConfigs {
+        debug {
+            storeFile file('debug.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+    }
     buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'

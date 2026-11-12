@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "61718594476",
+    "project_id": "ind-toktok",
+    "storage_bucket": "ind-toktok.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:61718594476:android:4fe7bc2ad3911ccfa5f009",
+        "android_client_info": {
+          "package_name": "com.indtoktok.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAc9vIJmEECnkr3IHAsl_F2l1JXG2xgF4E"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

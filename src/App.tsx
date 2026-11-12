@@ -314,11 +314,36 @@ export default function App() {
         showNotice(res.message)
         return
       }
+      // تحقق فوري (أندرويد): الرقم اتأكد من غير SMS — كمّل التسجيل على طول
+      if (res.autoVerified) {
+        finishPhoneVerified()
+        showNotice(res.message)
+        return
+      }
       setOtpSent(true)
       showNotice(res.message)
     } finally {
       setOtpBusy(false)
     }
+  }
+
+  /** يحفظ ملف العميل بعد تأكيد رقمه (يستخدمه تأكيد الكود والتحقق الفوري). */
+  function finishPhoneVerified() {
+    const phone = regPhone.trim()
+    const profile = {
+      name: regName.trim() || 'عميل',
+      phone,
+      code: clientCodeForPhone(phone),
+      phoneVerified: true,
+      ratingAvg: 0,
+      ratingCount: 0,
+    }
+    update({ passenger: profile })
+    void saveDoc('passengers', phone, profile)
+    setEditingPhone(false)
+    setOtpSent(false)
+    setOtpInput('')
+    showNotice(`أهلاً ${profile.name}! رقمك اتأكد وكودك ${profile.code}.`)
   }
 
   async function verifyOtp() {
@@ -329,21 +354,7 @@ export default function App() {
         showNotice(res.message)
         return
       }
-      const phone = regPhone.trim()
-      const profile = {
-        name: regName.trim() || 'عميل',
-        phone,
-        code: clientCodeForPhone(phone),
-        phoneVerified: true,
-        ratingAvg: 0,
-        ratingCount: 0,
-      }
-      update({ passenger: profile })
-      void saveDoc('passengers', phone, profile)
-      setEditingPhone(false)
-      setOtpSent(false)
-      setOtpInput('')
-      showNotice(`أهلاً ${profile.name}! رقمك اتأكد وكودك ${profile.code}.`)
+      finishPhoneVerified()
     } finally {
       setOtpBusy(false)
     }

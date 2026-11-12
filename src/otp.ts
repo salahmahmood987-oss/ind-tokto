@@ -3,17 +3,16 @@
 // الكود يتبعت برسالة SMS حقيقية من Firebase على موبايل العميل، و**لا يظهر
 // أبداً داخل التطبيق**. لا يوجد كود تجريبي هنا.
 //
-// المسار:
-//   1) sendOtpCode(phone) — يحوّل الرقم لصيغة E.164 (+20...)، يتأكد من حد
-//      التطبيق (3 طلبات في الساعة لكل رقم — قبل ما ننادي Firebase عشان
-//      ما نحرقش رسايل SMS)، ثم signInWithPhoneNumber مع reCAPTCHA مخفي.
-//   2) verifyOtpCode(code) — يستدعي ConfirmationResult.confirm(code).
-//
-// حدود Firebase نفسها: المشاريع الجديدة ليها حد **10 رسايل SMS في اليوم**
-// لحد ما يضيف صلاح حساب فوترة (Blaze) للمشروع من الكونسول، وبعدها الحد
-// بيرتفع والدفع بيكون حسب الاستخدام. خطأ auth/quota-exceeded معناه إن
-// الحد اليومي خلص.
+// مساران:
+//   • على أندرويد (تطبيق Capacitor): التحقق **الأصلي** عبر إضافة
+//     @capacitor-firebase/authentication — بيستخدم Firebase SDK الأصلي
+//     (Play Integrity/SafetyNet)، لأن reCAPTCHA الويب لا يعمل داخل WebView
+//     ويفشل بخطأ auth/invalid-app-credential. يتطلب ملف google-services.json
+//     في android/app/ وتسجيل بصمة SHA-1 لمفتاح debug في الكونسول.
+//   • على الويب: signInWithPhoneNumber مع reCAPTCHA مخفي.
 // ---------------------------------------------------------------------------
+import { Capacitor } from '@capacitor/core'
+import { FirebaseAuthentication } from '@capacitor-firebase/authentication'
 import { RecaptchaVerifier, signInWithPhoneNumber } from 'firebase/auth'
 import type { ConfirmationResult } from 'firebase/auth'
 import { getFirebaseAuth } from './firebaseApp'
@@ -111,7 +110,16 @@ function firebaseErrorMessage(code: string): string {
     case 'auth/network-request-failed':
       return 'مشكلة في الاتصال بالإنترنت — حاول تاني.'
     case 'auth/app-not-authorized':
+    case 'auth/unauthorized-domain':
       return 'الدومين ده مش مصرّح ليه في Firebase — أضف الدومين من Authentication ← Settings ← Authorized domains.'
+    case 'auth/invalid-app-credential':
+      return 'التحقق الأمني فشل داخل التطبيق (WebView) — جرّب تقفل التطبيق وتفتحه تاني، أو حدّث التطبيق لآخر نسخة.'
+    case 'auth/operation-not-allowed':
+      return 'تسجيل الدخول بالهاتف مش مفعّل في Firebase — فعّله من Authentication ← Sign-in method ← Phone.'
+    case 'auth/web-storage-unsupported':
+      return 'التخزين المحلي مش متاح في المتصفح ده — جرّب متصفح تاني.'
+    case 'auth/internal-error':
+      return `خطأ داخلي من Firebase أثناء إرسال الكود — حاول تاني بعد شوية. (كود الخطأ: ${code})`
     case 'auth/invalid-verification-code':
       return 'الكود غلط — راجع الرسالة وحاول تاني.'
     case 'auth/code-expired':
@@ -122,7 +130,9 @@ function firebaseErrorMessage(code: string): string {
     case 'auth/user-disabled':
       return 'الحساب ده موقوف — كلم الإدارة.'
     default:
-      return 'حصلت مشكلة في إرسال/تأكيد الكود — حاول تاني.'
+      return code
+        ? `حصلت مشكلة في إرسال/تأكيد الكود — حاول تاني. (كود الخطأ: ${code})`
+        : 'حصلت مشكلة في إرسال/تأكيد الكود — حاول تاني.'
   }
 }
 
@@ -140,7 +150,79 @@ export interface OtpSendResult {
   remaining: number
   /** دقائق الانتظار عند رفض الطلب */
   waitMinutes?: number
+  /** true لو Firebase أكّد الرقم تلقائياً بدون SMS (تحقق فوري على أندرويد) */
+  autoVerified?: boolean
   message: string
+}
+
+// verificationId للتحقق الأصلي (أندرويد) — بديل ConfirmationResult للويب.
+let nativeVerificationId: string | null = null
+
+type NativeSendOutcome =
+  | { kind: 'sent'; verificationId: string }
+  | { kind: 'completed' }
+  | { kind: 'failed'; message: string; code?: string }
+
+/**
+ * يبدأ التحقق الأصلي وينتظر أول حدث: كود اتبعت، أو تحقق فوري، أو فشل.
+ * لازم نسجّل المستمعين قبل مناداة signInWithPhoneNumber عشان الحدث ما يضيعش.
+ */
+async function nativeSendOtp(e164: string): Promise<NativeSendOutcome> {
+  return new Promise<NativeSendOutcome>((resolve) => {
+    let done = false
+    const handles: { remove: () => Promise<void> }[] = []
+    const finish = (o: NativeSendOutcome) => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      void Promise.all(handles.map((h) => h.remove().catch(() => {})))
+      resolve(o)
+    }
+    const timer = setTimeout(
+      () =>
+        finish({
+          kind: 'failed',
+          message: 'انتهت مهلة انتظار رد Firebase — حاول تاني.',
+        }),
+      120_000,
+    )
+    void (async () => {
+      try {
+        handles.push(
+          await FirebaseAuthentication.addListener('phoneCodeSent', (e) =>
+            finish({ kind: 'sent', verificationId: e.verificationId }),
+          ),
+        )
+        handles.push(
+          await FirebaseAuthentication.addListener(
+            'phoneVerificationCompleted',
+            () => finish({ kind: 'completed' }),
+          ),
+        )
+        handles.push(
+          await FirebaseAuthentication.addListener(
+            'phoneVerificationFailed',
+            (e) =>
+              finish({
+                kind: 'failed',
+                message: e.message || 'فشل التحقق من رقم الهاتف.',
+                code: e.code,
+              }),
+          ),
+        )
+        await FirebaseAuthentication.signInWithPhoneNumber({
+          phoneNumber: e164,
+        })
+      } catch (e) {
+        console.warn('Native Firebase Phone Auth send failed:', e)
+        finish({
+          kind: 'failed',
+          message: firebaseErrorMessage(errorCode(e)),
+          code: errorCode(e),
+        })
+      }
+    })()
+  })
 }
 
 /**
@@ -188,6 +270,47 @@ export async function sendOtpCode(phone: string): Promise<OtpSendResult> {
     return { ok: false, remaining: 0, message: 'Firebase Auth مش متاح دلوقتي — حاول تاني.' }
   }
 
+  // --- أندرويد: تحقق أصلي (Native) عبر إضافة Capacitor Firebase ---
+  // في الإضافة v8: signInWithPhoneNumber لا ترجع verificationId مباشرة،
+  // بل ترسل أحداث: phoneCodeSent (فيه verificationId) أو
+  // phoneVerificationCompleted (تحقق فوري/تلقائي) أو phoneVerificationFailed.
+  if (Capacitor.isNativePlatform()) {
+    const outcome = await nativeSendOtp(e164)
+    if (outcome.kind === 'failed') {
+      nativeVerificationId = null
+      return {
+        ok: false,
+        remaining: OTP_MAX_PER_HOUR - recent.length,
+        message: outcome.code
+          ? firebaseErrorMessage(outcome.code)
+          : outcome.message,
+      }
+    }
+    // سجّل الطلب بعد الإرسال الناجح بس (مش على الفشل)
+    records[phone] = { requests: [...recent, now] }
+    save(records)
+    const remaining = OTP_MAX_PER_HOUR - recent.length - 1
+    if (outcome.kind === 'completed') {
+      // تحقق فوري: Firebase أكّد الرقم وسجّل الدخول بدون SMS
+      nativeVerificationId = null
+      return {
+        ok: true,
+        e164,
+        remaining,
+        autoVerified: true,
+        message: 'تم تأكيد رقمك تلقائياً بنجاح.',
+      }
+    }
+    nativeVerificationId = outcome.verificationId
+    return {
+      ok: true,
+      e164,
+      remaining,
+      message: `الكود اتبعت في رسالة SMS على ${e164} — اكتب الكود اللي وصلك (6 أرقام). فاضل ${remaining} من 3 طلبات في الساعة.`,
+    }
+  }
+
+  // --- الويب: signInWithPhoneNumber مع reCAPTCHA مخفي ---
   try {
     if (!verifier) {
       verifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
@@ -226,6 +349,27 @@ export async function verifyOtpCode(
   const code = normalizeDigits(input.trim())
   if (!/^\d{6}$/.test(code)) {
     return { ok: false, message: 'الكود 6 أرقام — اكتب الكود اللي وصلك في رسالة SMS.' }
+  }
+  // --- أندرويد: تأكيد أصلي ---
+  if (Capacitor.isNativePlatform()) {
+    if (!nativeVerificationId) {
+      return { ok: false, message: 'اطلب كود الأول — دوس «ابعت كود التحقق».' }
+    }
+    try {
+      await FirebaseAuthentication.confirmVerificationCode({
+        verificationId: nativeVerificationId,
+        verificationCode: code,
+      })
+      nativeVerificationId = null
+      return { ok: true, message: 'تم تأكيد رقمك بنجاح.' }
+    } catch (e) {
+      console.warn('Native Firebase Phone Auth confirm failed:', e)
+      const errCode = errorCode(e)
+      if (errCode === 'auth/code-expired' || errCode === 'auth/session-expired') {
+        nativeVerificationId = null
+      }
+      return { ok: false, message: firebaseErrorMessage(errCode) }
+    }
   }
   if (!confirmation) {
     return { ok: false, message: 'اطلب كود الأول — دوس «ابعت كود التحقق».' }

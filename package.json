@@ -12,11 +12,12 @@
     "apk:debug": "npm run build && npx cap sync android && cd android && ./gradlew assembleDebug"
   },
   "dependencies": {
+    "@capacitor-firebase/authentication": "^8.6.0",
     "@capacitor/android": "^8.6.0",
     "@capacitor/cli": "^8.6.0",
     "@capacitor/core": "^8.6.0",
     "@types/leaflet": "^1.9.22",
-    "firebase": "^13.3.0",
+    "firebase": "^12.19.0",
     "leaflet": "^1.9.4",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"

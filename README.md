@@ -67,20 +67,26 @@ reCAPTCHA مخفي (invisible) — المنطق كله في `src/otp.ts`، وا�
   أضفه من **Authentication ← Settings ← Authorized domains** قبل
   التجربة، وإلا الإرسال يترفض بخطأ `auth/app-not-authorized`.
 
-### ملحوظة عن نسخة الأندرويد (Capacitor / APK)
+### نسخة الأندرويد (Capacitor / APK) — تحقق أصلي ✅
 
-`signInWithPhoneNumber` على الويب يعتمد على **reCAPTCHA**، وهو يشتغل
-في WebView الخاصة بـ Capacitor طالما فيه إنترنت، لأن أصل التطبيق
-`https://localhost` مصرّح ليه افتراضياً في Firebase. لو واجهت مشكلة
-في الـ APK، البدائل:
-1. جرّب أولاً من المتصفح على نفس الموبايل (نسخة الويب) للتأكد إن
-   الإرسال شغال من Firebase أصلاً.
-2. في الـ APK، تأكد من وجود اتصال إنترنت ومن إن `allowMixedContent`
-   مفعّل (هو مفعّل في `capacitor.config.ts`).
-3. لو reCAPTCHA اتحجب في WebView على جهاز معين، الحل البديل هو
-   تسجيل الدخول بالهاتف عبر نسخة الويب المنشورة على دومين مصرّح ليه،
-   أو استخدام التحقق عبر Cloud Function — ودي خطوة لاحقة عند الحاجة،
-   مش مطلوبة للتجربة الحالية.
+reCAPTCHA الويب **لا يعمل داخل WebView** في التطبيق المثبّت، ويفشل
+بخطأ `auth/invalid-app-credential`. لذلك نسخة الأندرويد تستخدم
+**التحقق الأصلي** عبر إضافة `@capacitor-firebase/authentication`
+(المنطق في `src/otp.ts` — يشتغل تلقائياً لما التطبيق يكون Native،
+ويفضل مسار الويب reCAPTCHA شغالاً للمتصفح). التحقق الأصلي بيستخدم
+Firebase SDK الأصلي (Play Integrity) ويدعم التحقق الفوري بدون SMS
+على بعض الأجهزة.
+
+**إعداد مطلوب مرة واحدة في كونسول Firebase (قبل أول بناء APK):**
+1. Project settings (⚙️) → Your apps → **Add app → Android**.
+2. Android package name: `com.indtoktok.app`، والاسم: ind toktok.
+3. سجّل بصمة SHA-1 لمفتاح التوقيع الثابت (ملف `android/app/debug.keystore`):
+   `64:E8:EB:E7:7E:A5:DD:02:86:44:BA:D2:11:1A:1C:6D:62:1E:01:8F`
+   (SHA-256 للاحتياط:
+   `E3:54:16:CE:92:9B:0E:81:E1:A7:49:D8:8F:8F:D3:78:E7:3D:5E:BF:91:53:7A:88:DB:CE:FC:10:85:F7:30:10`)
+4. حمّل ملف **`google-services.json`** وحطه في `android/app/`
+   (جنب `debug.keystore`). بدونه التحقق الأصلي مش هيشتغل.
+5. مفتاح التوقيع ثابت في الريبو، فالبصمة لا تتغير بين البناءات.
 
 ## 4) الصور بدون Storage — Base64 مضغوطة داخل Firestore ✅
 
