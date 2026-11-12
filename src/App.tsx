@@ -5,7 +5,7 @@ import MapView from './MapView'
 import type { MapMode } from './MapView'
 import { IconCheck, IconDriver, IconHistory, IconList, IconPin, IconShield, IconUser, IconWallet } from './icons'
 import logoUrl from './assets/icon-1024.png'
-import { firebaseEnabled, loadDoc, subscribeRides, uploadImageAsDataUrl, saveDoc } from './firebaseDb'
+import { firebaseEnabled, loadDoc, setFirestoreErrorHandler, subscribeRides, uploadImageAsDataUrl, saveDoc } from './firebaseDb'
 import { otpRemaining, sendOtpCode, verifyOtpCode } from './otp'
 import {
   clientCodeForPhone,
@@ -269,6 +269,16 @@ export default function App() {
   stateRef.current = state
 
   useEffect(() => saveState(state), [state])
+  // أي فشل في Firestore يظهر للمستخدم مرة واحدة في الجلسة بدل ما يفشل بصمت
+  const firestoreErrorShownRef = useRef(false)
+  useEffect(() => {
+    setFirestoreErrorHandler((msg) => {
+      if (firestoreErrorShownRef.current) return
+      firestoreErrorShownRef.current = true
+      showNotice(`تعذر الاتصال بقاعدة البيانات — المزامنة مش شغالة. (${msg.slice(0, 120)})`)
+    })
+    return () => setFirestoreErrorHandler(null)
+  }, [])
 
   const fare = Math.max(
     FARE_MIN,
@@ -398,7 +408,7 @@ export default function App() {
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [verifiedPhones.passenger, state.passenger?.phone])
 
   // ---- مشاركة موقع السواق المباشر كل 5 ثواني ----
   useEffect(() => {
@@ -660,7 +670,7 @@ export default function App() {
       }
       // تحقق فوري (أندرويد): الرقم اتأكد من غير SMS — كمّل التسجيل على طول
       if (res.autoVerified) {
-        finishAuth()
+        void finishAuth()
         showNotice(res.message)
         return
       }
@@ -691,21 +701,24 @@ export default function App() {
   }
 
   /** يكمل الدخول بعد تأكيد الرقم — للسواق والعميل (يستخدمه تأكيد الكود والتحقق الفوري). */
-  function finishAuth() {
+  async function finishAuth() {
     const phone = regPhone.trim()
     const authRole: 'passenger' | 'driver' = appRole ?? 'passenger'
     saveVerifiedPhones({ ...verifiedPhones, [authRole]: phone })
     if (authRole === 'passenger') {
       const prev = state.passenger
       const samePhone = prev?.phone === phone
+      // لو مفيش بيانات محلية (إعادة تثبيت)، اقرأ نسخة السيرفر الأول
+      // قبل ما تكتب فوقها — عشان الاسم والصورة والتقييم ميرجعوش صفر
+      const server = !prev ? await loadDoc('passengers', phone) : null
       const profile = {
-        name: regName.trim() || prev?.name || 'عميل',
+        name: regName.trim() || prev?.name || (server?.name as string) || 'عميل',
         phone,
         code: clientCodeForPhone(phone),
         phoneVerified: true,
-        photoUrl: prev?.photoUrl ?? null,
-        ratingAvg: samePhone ? (prev?.ratingAvg ?? 0) : 0,
-        ratingCount: samePhone ? (prev?.ratingCount ?? 0) : 0,
+        photoUrl: prev?.photoUrl ?? (server?.photoUrl as string | null) ?? null,
+        ratingAvg: samePhone ? (prev?.ratingAvg ?? 0) : (server?.ratingAvg as number) ?? 0,
+        ratingCount: samePhone ? (prev?.ratingCount ?? 0) : (server?.ratingCount as number) ?? 0,
       }
       update({ passenger: profile })
       void saveDoc('passengers', phone, profile)
@@ -729,7 +742,7 @@ export default function App() {
         showNotice(res.message)
         return
       }
-      finishAuth()
+      void finishAuth()
     } finally {
       setOtpBusy(false)
     }
@@ -1224,7 +1237,7 @@ export default function App() {
           </div>
         )}
         <footer className="footer">
-          <p className="muted">ind toktok — الإصدار 16</p>
+          <p className="muted">ind toktok — الإصدار 17</p>
         </footer>
       </div>
     )
@@ -1268,7 +1281,7 @@ export default function App() {
             <button className="link-btn" onClick={() => chooseRole('passenger')}>تبديل — أنا راكب</button>
           </div>
         )}
-        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 16</p>
+        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 17</p>
       </footer>
     </div>
   )

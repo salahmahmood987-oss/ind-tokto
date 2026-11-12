@@ -11,6 +11,13 @@
 //  src/imageUpload.ts. عند الترقية لـ Blaze لاحقاً ممكن ترحيلها
 //  لـ Storage وتبديل الحقول بروابط.
 //
+//  ملحوظة مهمة (إصلاح 2026-11-12): الاستيراد هنا ثابت (static) عمداً —
+//  الاستيراد الديناميكي import('firebase/firestore') كان بيطلع ملف منفصل
+//  (chunk) لازم يتحمّل وقت التشغيل، وفي WebView بتاع Capacitor كان
+//  بيفشل بصمت فكل عمليات Firestore (حفظ/قراءة/مزامنة) مكانتش بتوصل
+//  للسيرفر أصلاً رغم إن القواعد مفتوحة. الاستيراد الثابت بيضم الكود
+//  في الحزمة الرئيسية فمفيش تحميل وقت التشغيل.
+//
 //  مجموعات Firestore المقترحة:
 //    passengers/{phone}   — name, phone, code, phoneVerified, ratingAvg...
 //    drivers/{code}       — profile + idCardUrl (Base64 مضغوطة) + wallet debt + online
@@ -18,6 +25,8 @@
 //    payments/{id}        — driver payment requests + screenshotUrl (Base64 مضغوطة)
 //    settings/admin       — admin walletNumber + walletName
 // ---------------------------------------------------------------------------
+import { collection, doc, getDoc, getFirestore, onSnapshot, setDoc } from 'firebase/firestore'
+import type { Firestore } from 'firebase/firestore'
 import { isFirebaseConfigured } from './firebaseConfig'
 import { getFirebaseApp } from './firebaseApp'
 import { preparePhotoForFirestore } from './imageUpload'
@@ -25,51 +34,55 @@ import type { Ride } from './types'
 
 export const firebaseEnabled = isFirebaseConfigured
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AnyDb = any
-let dbPromise: Promise<AnyDb> | null = null
+/** يتنادى عند فشل أي عملية Firestore — التطبيق بيسجّلها وبيعرضها للمستخدم. */
+let errorHandler: ((message: string) => void) | null = null
+export function setFirestoreErrorHandler(fn: ((message: string) => void) | null) {
+  errorHandler = fn
+}
+function reportError(where: string, e: unknown) {
+  const msg = e instanceof Error ? e.message : String(e)
+  console.warn(`Firestore ${where} failed:`, e)
+  errorHandler?.(`${where}: ${msg}`)
+}
 
-async function getDb(): Promise<AnyDb> {
+let db: Firestore | null | undefined
+function getDb(): Firestore | null {
   if (!isFirebaseConfigured) return null
-  if (!dbPromise) {
-    dbPromise = (async () => {
-      const { getFirestore } = await import('firebase/firestore')
-      return getFirestore(getFirebaseApp()!)
-    })()
+  if (db === undefined) {
+    const app = getFirebaseApp()
+    db = app ? getFirestore(app) : null
   }
-  return dbPromise
+  return db
 }
 
 /** يقرأ مستنداً واحداً من Firestore — null لو مش موجود أو مفيش إعداد. */
 export async function loadDoc(
-  collection: string,
+  collectionName: string,
   id: string,
 ): Promise<Record<string, unknown> | null> {
   try {
-    const db = await getDb()
+    const db = getDb()
     if (!db) return null
-    const { doc, getDoc } = await import('firebase/firestore')
-    const snap = await getDoc(doc(db, collection, id))
+    const snap = await getDoc(doc(db, collectionName, id))
     return snap.exists() ? (snap.data() as Record<string, unknown>) : null
   } catch (e) {
-    console.warn('Firestore load failed (demo mode continues):', e)
+    reportError('قراءة', e)
     return null
   }
 }
 
 /** يحفظ مستنداً في Firestore عند توفر الإعداد — وإلا يتجاهل. */
 export async function saveDoc(
-  collection: string,
+  collectionName: string,
   id: string,
   data: Record<string, unknown>,
 ): Promise<void> {
   try {
-    const db = await getDb()
+    const db = getDb()
     if (!db) return
-    const { doc, setDoc } = await import('firebase/firestore')
-    await setDoc(doc(db, collection, id), data, { merge: true })
+    await setDoc(doc(db, collectionName, id), data, { merge: true })
   } catch (e) {
-    console.warn('Firestore save failed (demo mode continues):', e)
+    reportError('حفظ', e)
   }
 }
 
@@ -119,24 +132,17 @@ function normalizeRide(id: string, data: Record<string, unknown>): Ride {
  * يرجع دالة إلغاء الاشتراك. في الوضع التجريبي المحلي يرجع دالة فاضية.
  */
 export function subscribeRides(cb: (rides: Ride[]) => void): () => void {
-  let unsub: (() => void) | null = null
-  let cancelled = false
-  ;(async () => {
-    try {
-      const db = await getDb()
-      if (!db || cancelled) return
-      const { collection, onSnapshot } = await import('firebase/firestore')
-      unsub = onSnapshot(
-        collection(db, 'rides'),
-        (snap) => cb(snap.docs.map((d) => normalizeRide(d.id, d.data() as Record<string, unknown>))),
-        (err) => console.warn('Firestore rides listen failed:', err),
-      )
-    } catch (e) {
-      console.warn('Firestore rides listen failed:', e)
-    }
-  })()
-  return () => {
-    cancelled = true
-    unsub?.()
+  try {
+    const db = getDb()
+    if (!db) return () => {}
+    const unsub = onSnapshot(
+      collection(db, 'rides'),
+      (snap) => cb(snap.docs.map((d) => normalizeRide(d.id, d.data() as Record<string, unknown>))),
+      (err) => reportError('مزامنة الرحلات', err),
+    )
+    return () => unsub()
+  } catch (e) {
+    reportError('مزامنة الرحلات', e)
+    return () => {}
   }
 }
