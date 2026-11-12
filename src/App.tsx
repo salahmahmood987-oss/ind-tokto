@@ -743,21 +743,17 @@ export default function App() {
       <nav className="tabs">
         <button className={role === 'passenger' ? 'tab active' : 'tab'} onClick={() => setRole('passenger')}><IconUser />راكب</button>
         <button className={role === 'driver' ? 'tab active' : 'tab'} onClick={() => setRole('driver')}><IconDriver />سواق</button>
-        <button className={role === 'driver' ? 'tab active' : 'tab'} onClick={() => setRole('driver')}><IconWallet />محفظة السواق</button>
+        <button className={role === 'wallet' ? 'tab active' : 'tab'} onClick={() => setRole('wallet')}><IconWallet />محفظة السواق</button>
         <button className={role === 'admin' ? 'tab active' : 'tab'} onClick={() => setRole('admin')}><IconShield />الإدارة</button>
       </nav>
       {notice && <div className="notice">{notice}</div>}
       {role === 'passenger' && passengerView}
-      {role === 'driver' && (
-        <>
-          {driverView}
-          {walletView}
-        </>
-      )}
+      {role === 'driver' && driverView}
+      {role === 'wallet' && walletView}
       {role === 'admin' && adminView}
       <footer className="footer">
         <p>آخر رحلة: {lastRide ? `${lastRide.orderNo} — ${lastRide.status}` : 'لسه مفيش رحلات'}</p>
-        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 7</p>
+        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 8</p>
       </footer>
     </div>
   )

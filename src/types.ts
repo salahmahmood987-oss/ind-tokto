@@ -4,7 +4,7 @@ export interface LatLng {
   label: string
 }
 
-export type Role = 'passenger' | 'driver' | 'admin'
+export type Role = 'passenger' | 'driver' | 'wallet' | 'admin'
 
 export interface PassengerProfile {
   name: string
