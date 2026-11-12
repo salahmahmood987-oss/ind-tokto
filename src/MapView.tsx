@@ -17,12 +17,13 @@ interface MapViewProps {
 // وسط القاهرة كبداية افتراضية
 const CAIRO: [number, number] = [30.0444, 31.2357]
 
-function pinIcon(emoji: string, color: string): L.DivIcon {
+// دبوس خريطة عصري على شكل قطرة — بدون إيموجي
+function pinIcon(color: string): L.DivIcon {
   return L.divIcon({
     className: 'toktok-pin',
-    html: `<div style="background:${color};border:2px solid #fff;border-radius:50%;width:34px;height:34px;display:flex;align-items:center;justify-content:center;font-size:18px;box-shadow:0 2px 8px rgba(0,0,0,.35)">${emoji}</div>`,
-    iconSize: [34, 34],
-    iconAnchor: [17, 17],
+    html: `<svg width="36" height="48" viewBox="0 0 24 32" xmlns="http://www.w3.org/2000/svg"><path d="M12 0C5.4 0 0 5.4 0 12c0 9 12 20 12 20s12-11 12-20C24 5.4 18.6 0 12 0z" fill="${color}" stroke="#fff" stroke-width="1.5"/><circle cx="12" cy="12" r="5" fill="#fff"/></svg>`,
+    iconSize: [36, 48],
+    iconAnchor: [18, 46],
   })
 }
 
@@ -68,7 +69,7 @@ export default function MapView({
     const points: L.LatLngExpression[] = []
     if (pickup) {
       markersRef.current.push(
-        L.marker([pickup.lat, pickup.lng], { icon: pinIcon('🟢', '#16a34a') })
+        L.marker([pickup.lat, pickup.lng], { icon: pinIcon('#16a34a') })
           .addTo(map)
           .bindPopup(`نقطة الركوب: ${pickup.label}`),
       )
@@ -77,7 +78,7 @@ export default function MapView({
     if (destination) {
       markersRef.current.push(
         L.marker([destination.lat, destination.lng], {
-          icon: pinIcon('🔴', '#dc2626'),
+          icon: pinIcon('#dc2626'),
         })
           .addTo(map)
           .bindPopup(`الوجهة: ${destination.label}`),
@@ -86,7 +87,7 @@ export default function MapView({
     }
     if (driver) {
       markersRef.current.push(
-        L.marker([driver.lat, driver.lng], { icon: pinIcon('🛺', '#f59e0b') })
+        L.marker([driver.lat, driver.lng], { icon: pinIcon('#f59e0b') })
           .addTo(map)
           .bindPopup(`الكابتن: ${driver.label}`),
       )

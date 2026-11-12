@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { Geolocation } from '@capacitor/geolocation'
 import MapView from './MapView'
 import type { MapMode } from './MapView'
+import { IconCheck, IconDriver, IconPin, IconShield, IconUser, IconWallet } from './icons'
+import logoUrl from './assets/icon-1024.png'
 import { firebaseEnabled } from './firebaseDb'
 import { uploadImageAsDataUrl, saveDoc } from './firebaseDb'
 import { isFirebaseConfigured } from './firebaseConfig'
@@ -492,7 +494,7 @@ export default function App() {
 
   const driverView = (
     <div className="card">
-      <h2>🛺 بيانات الكابتن</h2>
+      <h2><span className="icon-chip"><IconDriver /></span>بيانات الكابتن</h2>
       <div className="grid">
         <input placeholder="الاسم" value={state.driver.name} onChange={(e) => update({ driver: { ...state.driver, name: e.target.value } })} />
         <input placeholder="رقم التليفون" value={state.driver.phone} onChange={(e) => update({ driver: { ...state.driver, phone: e.target.value } })} />
@@ -527,10 +529,9 @@ export default function App() {
       {state.rides.filter((r) => r.status === 'searching').map((r) => (
         <div key={r.orderNo} className="ride">
           <b>{r.orderNo}</b> — {r.passengerName} ({r.passengerCode}) — تقييم العميل: {r.passengerRating} ★
-          <br />من: {r.pickup.label} — إلى: {r.destination.label}
+          <br />من: <span className="lock-note">🔒 نقطة الركوب — هتظهر بعد قبول الطلب</span>
+          <br />إلى: {r.destination.label}
           <br />السعر المقترح: <b>{money(r.fare)}</b>
-          <br />
-          <a className="link" target="_blank" rel="noreferrer" href={`https://www.google.com/maps/dir/?api=1&destination=${r.pickup.lat},${r.pickup.lng}`}>الاتجاهات لنقطة الركوب ↗</a>
           <br />
           <button className="btn" disabled={isDebtBlocked(state.debt) || !state.driver.online} onClick={() => {
             const offer: Offer = { id: `${r.orderNo}-${state.driver.code}`, rideId: r.orderNo, driverCode: state.driver.code, driverName: state.driver.name || 'الكابتن', driverRating: state.driver.ratingAvg, price: r.fare, etaMinutes: 5, plate: state.driver.plate, color: state.driver.color, model: state.driver.model }
@@ -543,6 +544,9 @@ export default function App() {
       {activeRide && activeRide.status !== 'searching' && (
         <div className="ride">
           <b>{activeRide.orderNo}</b> — {activeRide.passengerName} — {activeRide.status === 'matched' ? 'في الطريق للعميل' : activeRide.status === 'driver_arrived' ? 'وصلت للعميل' : 'الرحلة شغالة'}
+          <br />من: {activeRide.pickup.label} — إلى: {activeRide.destination.label}
+          <br />
+          <a className="link" target="_blank" rel="noreferrer" href={`https://www.google.com/maps/dir/?api=1&destination=${activeRide.pickup.lat},${activeRide.pickup.lng}`}>الاتجاهات لنقطة الركوب ↗</a>
           <div className="row">
             {activeRide.status === 'matched' && <button className="btn" onClick={() => setRideStatus(activeRide.orderNo, 'driver_arrived')}>وصلت للعميل</button>}
             {activeRide.status === 'driver_arrived' && <button className="btn" onClick={() => setRideStatus(activeRide.orderNo, 'on_trip')}>ابدأ الرحلة</button>}
@@ -561,7 +565,7 @@ export default function App() {
 
   const passengerView = (
     <div className="card">
-      <h2>🚕 اطلب توكتوك</h2>
+      <h2><span className="icon-chip"><IconUser /></span>اطلب توكتوك</h2>
       {!state.passenger || editingPhone ? (
         <div className="box">
           <h3>التسجيل برقم التليفون — مرة واحدة بس</h3>
@@ -584,7 +588,7 @@ export default function App() {
         </div>
       ) : (
         <div className="saved-bar">
-          👤 {state.passenger.name} — {state.passenger.phone} — كودك: <b>{state.passenger.code}</b> ✓ موثق
+          <IconUser /> {state.passenger.name} — {state.passenger.phone} — كودك: <b>{state.passenger.code}</b> <IconCheck /> موثق
           <button className="link-btn" onClick={() => { setRegName(state.passenger?.name || ''); setRegPhone(state.passenger?.phone || ''); setEditingPhone(true) }}>تعديل الرقم</button>
         </div>
       )}
@@ -594,7 +598,7 @@ export default function App() {
           <label>نقطة الركوب</label>
           <input placeholder="منين؟" value={pickupLabel} onChange={(e) => setPickupLabel(e.target.value)} />
           <div className="row">
-            <button className="btn small" onClick={() => useMyLocation('pickup')}>📍 موقعي الحالي</button>
+            <button className="btn small" onClick={() => useMyLocation('pickup')}><IconPin /> موقعي الحالي</button>
             <button className={pickMode === 'pickup' ? 'btn small active' : 'btn small'} onClick={() => setPickMode('pickup')}>حدّد على الخريطة</button>
           </div>
         </div>
@@ -602,7 +606,7 @@ export default function App() {
           <label>الوجهة</label>
           <input placeholder="رايح فين؟" value={destLabel} onChange={(e) => setDestLabel(e.target.value)} />
           <div className="row">
-            <button className="btn small" onClick={() => useMyLocation('destination')}>📍 موقعي الحالي</button>
+            <button className="btn small" onClick={() => useMyLocation('destination')}><IconPin /> موقعي الحالي</button>
             <button className={pickMode === 'destination' ? 'btn small active' : 'btn small'} onClick={() => setPickMode('destination')}>حدّد على الخريطة</button>
           </div>
         </div>
@@ -639,7 +643,7 @@ export default function App() {
 
       {activeRide && (
         <div className="ride">
-          <b>{activeRide.orderNo}</b> — {activeRide.status === 'searching' ? 'بندور على سواقين…' : activeRide.status === 'matched' ? `الكابتن ${activeRide.driverName} في الطريق إليك 🛺` : activeRide.status}
+          <b>{activeRide.orderNo}</b> — {activeRide.status === 'searching' ? 'بندور على سواقين…' : activeRide.status === 'matched' ? `الكابتن ${activeRide.driverName} في الطريق إليك` : activeRide.status}
           {activeRide.driverLocAt && <p className="muted">موقع السواق اتحدّث {new Date(activeRide.driverLocAt).toLocaleTimeString('ar-EG')}</p>}
           {activeRide.status === 'searching' && activeRide.offers.map((o) => (
             <div key={o.id} className="offer">
@@ -661,7 +665,7 @@ export default function App() {
 
   const walletView = (
     <div className="card">
-      <h2>💰 محفظة الكابتن</h2>
+      <h2><span className="icon-chip green"><IconWallet /></span>محفظة الكابتن</h2>
       <p>المديونية الحالية: <b>{money(state.debt)}</b> من حد أقصى {money(MAX_DEBT_EGP)}</p>
       <div className="progress"><div className="progress-fill" style={{ width: `${Math.min(100, (state.debt / MAX_DEBT_EGP) * 100)}%` }} /></div>
       <p>إجمالي ما سددته: {money(state.totalPaid)} — العمولة 5% من كل رحلة مكتملة تتسجل مديونية تلقائياً.</p>
@@ -683,7 +687,7 @@ export default function App() {
 
   const adminView = (
     <div className="card">
-      <h2>🛡️ الإدارة — صلاح</h2>
+      <h2><span className="icon-chip"><IconShield /></span>الإدارة — صلاح</h2>
       <h3>رقم محفظتي</h3>
       <div className="grid">
         <input placeholder="رقم المحفظة" value={state.admin.walletNumber} onChange={(e) => update({ admin: { ...state.admin, walletNumber: e.target.value } })} />
@@ -730,16 +734,17 @@ export default function App() {
   return (
     <div className="app" dir="rtl">
       <header className="header">
-        <h1>🛺 ind toktok</h1>
+        <img src={logoUrl} alt="ind toktok" className="logo" />
+        <h1><span className="brand">ind toktok</span></h1>
         <p className="tagline">توكتوك زي inDrive — الراكب يسمّي سعره والسواقين يعرضوا</p>
         <span className="badge">{isFirebaseConfigured ? '☁️ Firebase متصل' : '🧪 وضع تجريبي محلي — Firebase مش مربوط بعد'}</span>
         {!firebaseEnabled && <p className="muted">للتشغيل الحقيقي: أنشئ مشروع Firebase باسم ind-toktok والصق الـ config في src/firebaseConfig.ts — شوف README.md</p>}
       </header>
       <nav className="tabs">
-        <button className={role === 'passenger' ? 'tab active' : 'tab'} onClick={() => setRole('passenger')}>راكب</button>
-        <button className={role === 'driver' ? 'tab active' : 'tab'} onClick={() => setRole('driver')}>سواق</button>
-        <button className={role === 'driver' ? 'tab active' : 'tab'} onClick={() => setRole('driver')}>محفظة السواق</button>
-        <button className={role === 'admin' ? 'tab active' : 'tab'} onClick={() => setRole('admin')}>الإدارة</button>
+        <button className={role === 'passenger' ? 'tab active' : 'tab'} onClick={() => setRole('passenger')}><IconUser />راكب</button>
+        <button className={role === 'driver' ? 'tab active' : 'tab'} onClick={() => setRole('driver')}><IconDriver />سواق</button>
+        <button className={role === 'driver' ? 'tab active' : 'tab'} onClick={() => setRole('driver')}><IconWallet />محفظة السواق</button>
+        <button className={role === 'admin' ? 'tab active' : 'tab'} onClick={() => setRole('admin')}><IconShield />الإدارة</button>
       </nav>
       {notice && <div className="notice">{notice}</div>}
       {role === 'passenger' && passengerView}
@@ -752,7 +757,7 @@ export default function App() {
       {role === 'admin' && adminView}
       <footer className="footer">
         <p>آخر رحلة: {lastRide ? `${lastRide.orderNo} — ${lastRide.status}` : 'لسه مفيش رحلات'}</p>
-        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 6</p>
+        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 7</p>
       </footer>
     </div>
   )
