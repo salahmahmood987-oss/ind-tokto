@@ -17,10 +17,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 20
+      # Capacitor 8 يتطلب Node >= 22 (مع Node 20 يفشل cap sync بخطأ fatal)
+      - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
 
       - name: Setup JDK 17
