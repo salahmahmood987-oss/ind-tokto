@@ -8,5 +8,12 @@
 	},
 	"server": {
 		"cleartext": true
+	},
+	"plugins": {
+		"FirebaseAuthentication": {
+			"providers": [
+				"phone"
+			]
+		}
 	}
 }

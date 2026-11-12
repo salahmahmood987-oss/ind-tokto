@@ -308,6 +308,8 @@ export default function App() {
       return
     }
     setOtpBusy(true)
+    // رد فوري للمستخدم عشان يعرف إن الضغطة اتسجلت
+    showNotice('جارٍ إرسال الكود…')
     try {
       const res = await sendOtpCode(phone)
       if (!res.ok) {
@@ -322,6 +324,18 @@ export default function App() {
       }
       setOtpSent(true)
       showNotice(res.message)
+    } catch (e) {
+      // أي خطأ غير متوقع لازم يظهر للمستخدم بدل ما الزرار يسكت خالص
+      console.warn('requestOtp failed:', e)
+      const code =
+        typeof e === 'object' && e !== null && 'code' in e
+          ? String((e as { code: unknown }).code)
+          : ''
+      showNotice(
+        code
+          ? `حصلت مشكلة غير متوقعة أثناء إرسال الكود — حاول تاني. (كود الخطأ: ${code})`
+          : 'حصلت مشكلة غير متوقعة أثناء إرسال الكود — حاول تاني.',
+      )
     } finally {
       setOtpBusy(false)
     }

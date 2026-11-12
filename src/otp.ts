@@ -182,9 +182,9 @@ async function nativeSendOtp(e164: string): Promise<NativeSendOutcome> {
       () =>
         finish({
           kind: 'failed',
-          message: 'انتهت مهلة انتظار رد Firebase — حاول تاني.',
+          message: 'انتهت مهلة انتظار رد Firebase (45 ثانية) — تأكد إن النت شغال وحاول تاني.',
         }),
-      120_000,
+      45_000,
     )
     void (async () => {
       try {
