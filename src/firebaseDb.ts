@@ -30,7 +30,7 @@ import type { Firestore } from 'firebase/firestore'
 import { isFirebaseConfigured } from './firebaseConfig'
 import { getFirebaseApp } from './firebaseApp'
 import { preparePhotoForFirestore } from './imageUpload'
-import type { Ride } from './types'
+import type { PaymentRequest, Ride } from './types'
 
 export const firebaseEnabled = isFirebaseConfigured
 
@@ -146,6 +146,39 @@ export function subscribeRides(cb: (rides: Ride[]) => void): () => void {
     return () => unsub()
   } catch (e) {
     reportError('مزامنة الرحلات', e)
+    return () => {}
+  }
+}
+
+function normalizePayment(id: string, data: Record<string, unknown>): PaymentRequest {
+  const d = data as unknown as Partial<PaymentRequest>
+  return {
+    id: d.id ?? id,
+    driverCode: d.driverCode ?? '',
+    driverName: d.driverName ?? 'الكابتن',
+    amount: d.amount ?? 0,
+    screenshotUrl: d.screenshotUrl ?? '',
+    status: d.status ?? 'pending',
+    createdAt: d.createdAt ?? Date.now(),
+  }
+}
+
+/**
+ * اشتراك حي في طلبات التحويل: طلب سداد من سواق على جهاز تاني
+ * يوصل فوراً لشاشة الإدارة — من غيره الأدمن مبيشوفش غير طلبات جهازه.
+ */
+export function subscribePayments(cb: (payments: PaymentRequest[]) => void): () => void {
+  try {
+    const db = getDb()
+    if (!db) return () => {}
+    const unsub = onSnapshot(
+      collection(db, 'payments'),
+      (snap) => cb(snap.docs.map((d) => normalizePayment(d.id, d.data() as Record<string, unknown>))),
+      (err) => reportError('مزامنة التحويلات', err),
+    )
+    return () => unsub()
+  } catch (e) {
+    reportError('مزامنة التحويلات', e)
     return () => {}
   }
 }

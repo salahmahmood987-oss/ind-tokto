@@ -17,10 +17,6 @@ export interface AppState {
   lastOrderNum: number
   /** آخر كود سواق مستخدم — السواق الجاي D-1002... */
   lastDriverNum: number
-  /** مديونية السواق الحالية (عمولات غير مسددة) */
-  debt: number
-  /** إجمالي ما سدده السواق */
-  totalPaid: number
 }
 
 const KEY = 'indtoktok_state_v1'
@@ -48,6 +44,8 @@ export function defaultDriver(): DriverProfile {
     sharingLocation: false,
     ratingAvg: 0,
     ratingCount: 0,
+    debt: 0,
+    totalPaid: 0,
     idCardUrl: null,
     idCardStatus: 'none',
     photoUrl: null,
@@ -65,8 +63,6 @@ export function defaultState(): AppState {
     admin: { walletNumber: '', walletName: '' },
     lastOrderNum: 1000,
     lastDriverNum: 1001,
-    debt: 0,
-    totalPaid: 0,
   }
 }
 
@@ -74,7 +70,14 @@ export function loadState(): AppState {
   try {
     const raw = localStorage.getItem(KEY)
     if (!raw) return defaultState()
-    return { ...defaultState(), ...(JSON.parse(raw) as AppState) }
+    const parsed = JSON.parse(raw) as AppState
+    // دمج عميق لملف السواق: نسخ قديمة محفوظة قبل إضافة debt/totalPaid
+    // كانت هتخليهم undefined — القيم الافتراضية بتملا الناقص
+    return {
+      ...defaultState(),
+      ...parsed,
+      driver: { ...defaultState().driver, ...(parsed.driver ?? {}) },
+    }
   } catch {
     return defaultState()
   }

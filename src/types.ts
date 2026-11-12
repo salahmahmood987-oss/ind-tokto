@@ -30,6 +30,10 @@ export interface DriverProfile {
   sharingLocation: boolean
   ratingAvg: number
   ratingCount: number
+  /** مديونية السواق الحالية (عمولات 5% غير مسددة) — متزامنة عبر مستند السواق في Firestore */
+  debt: number
+  /** إجمالي ما سدده السواق — متزامن عبر مستند السواق في Firestore */
+  totalPaid: number
   /** صورة البطاقة: Data URL مضغوطة (JPEG) مخزنة داخل مستند Firestore — بدون Storage */
   idCardUrl: string | null
   /** صورة شخصية (Data URL مضغوطة) تظهر للعميل — غير صورة البطاقة */

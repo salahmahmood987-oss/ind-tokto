@@ -5,7 +5,7 @@ import MapView from './MapView'
 import type { MapMode } from './MapView'
 import { IconCheck, IconDriver, IconHistory, IconList, IconPin, IconShield, IconUser, IconWallet } from './icons'
 import logoUrl from './assets/icon-1024.png'
-import { firebaseEnabled, loadDoc, setFirestoreErrorHandler, subscribeRides, uploadImageAsDataUrl, saveDoc } from './firebaseDb'
+import { firebaseEnabled, loadDoc, setFirestoreErrorHandler, subscribePayments, subscribeRides, uploadImageAsDataUrl, saveDoc } from './firebaseDb'
 import { sendOtpCode, verifyOtpCode } from './otp'
 import {
   clientCodeForPhone,
@@ -22,7 +22,7 @@ import {
   MAX_DEBT_EGP,
   OTP_MAX_PER_HOUR,
 } from './types'
-import type { LatLng, Offer, Ride, Role } from './types'
+import type { LatLng, Offer, PaymentRequest, Ride, Role } from './types'
 
 function stars(value: number, onRate?: (n: number) => void) {
   return (
@@ -164,6 +164,27 @@ function mergeRides(local: Ride[], remote: Ride[]): Ride[] {
       offers.length === ex.offers.length
     if (!same) {
       out[out.findIndex((x) => x.orderNo === rr.orderNo)] = { ...ex, ...rr, offers }
+      changed = true
+    }
+  }
+  return changed ? out : local
+}
+
+// دمج طلبات تحويل محلية مع نسخة السيرفر — نسخة السيرفر هي الأحدث (حالة الموافقة/الرفض)
+function mergePayments(local: PaymentRequest[], remote: PaymentRequest[]): PaymentRequest[] {
+  if (!remote.length) return local
+  const byId = new Map(local.map((p) => [p.id, p]))
+  let changed = false
+  const out = [...local]
+  for (const rp of remote) {
+    const ex = byId.get(rp.id)
+    if (!ex) {
+      out.push(rp)
+      changed = true
+      continue
+    }
+    if (ex.status !== rp.status || ex.amount !== rp.amount) {
+      out[out.findIndex((x) => x.id === rp.id)] = rp
       changed = true
     }
   }
@@ -364,6 +385,8 @@ export default function App() {
   // ---- رنين التنبيه للكابتن عند وصول طلب جديد ----
   const audioCtxRef = useRef<AudioContext | null>(null)
   const seenSearchingRef = useRef<Set<string>>(new Set())
+  const seenCancelledRef = useRef<Set<string>>(new Set())
+  const firstCancelledRef = useRef(true)
   const firstRidesRef = useRef(true)
   function ring() {
     try {
@@ -402,6 +425,16 @@ export default function App() {
       })
     })
   }, [])
+  // مزامنة حية لطلبات التحويل — طلب سداد من سواق تاني يوصل للإدارة فوراً
+  useEffect(() => {
+    if (!firebaseEnabled) return
+    return subscribePayments((remote) => {
+      setState((s) => {
+        const merged = mergePayments(s.payments, remote)
+        return merged === s.payments ? s : { ...s, payments: merged }
+      })
+    })
+  }, [])
   // رنين عند طلب جديد والكابتن فاتح التطبيق
   useEffect(() => {
     const searching = state.rides.filter((r) => r.status === 'searching')
@@ -413,6 +446,25 @@ export default function App() {
       return
     }
     if (fresh.length > 0 && appRole === 'driver') ring()
+  }, [state.rides, appRole])
+  // تنبيه لما الطرف التاني يلغي رحلة — العميل يعرف إن الكابتن لغى (والعكس) مع السبب
+  useEffect(() => {
+    const cancelled = state.rides.filter((r) => r.status === 'cancelled')
+    const fresh = cancelled.filter((r) => !seenCancelledRef.current.has(r.orderNo))
+    seenCancelledRef.current = new Set(cancelled.map((r) => r.orderNo))
+    if (firstCancelledRef.current) {
+      firstCancelledRef.current = false
+      return
+    }
+    for (const r of fresh) {
+      const mineAsPassenger = state.passenger?.phone === r.passengerPhone
+      const mineAsDriver = state.driver.code === r.driverCode
+      if (r.cancelledBy === 'driver' && mineAsPassenger) {
+        showNotice(`الكابتن لغى الرحلة ${r.orderNo}${r.cancelReason ? `: ${r.cancelReason}` : '.'}`)
+      } else if (r.cancelledBy === 'passenger' && mineAsDriver) {
+        showNotice(`العميل لغى الرحلة ${r.orderNo}.`)
+      }
+    }
   }, [state.rides, appRole])
 
   // استرجاع بيانات العميل لو اتمسحت من الموبايل (إعادة تثبيت):
@@ -476,6 +528,33 @@ export default function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [verifiedPhones.passenger, state.passenger?.phone])
+
+  // استرجاع بيانات الكابتن من السيرفر (التقييم والمديونية بيتحدثوا من الطرف التاني):
+  // التقييم اللي يديه العميل والخصم اللي يعمله الأدمن يوصلوا لملف السواق على جهازه
+  useEffect(() => {
+    const code = state.driver.code
+    if (!code || !firebaseEnabled) return
+    let cancelled = false
+    void loadDoc('drivers', code).then((doc) => {
+      if (cancelled || !doc) return
+      const cur = stateRef.current.driver
+      update({
+        driver: {
+          ...cur,
+          ratingAvg: (doc.ratingAvg as number) ?? cur.ratingAvg,
+          ratingCount: (doc.ratingCount as number) ?? cur.ratingCount,
+          debt: (doc.debt as number) ?? cur.debt,
+          totalPaid: (doc.totalPaid as number) ?? cur.totalPaid,
+          name: cur.name || (doc.name as string) || cur.name,
+          photoUrl: cur.photoUrl ?? (doc.photoUrl as string | null) ?? null,
+        },
+      })
+    })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.driver.code])
 
   // ---- مشاركة موقع السواق المباشر كل 5 ثواني ----
   useEffect(() => {
@@ -701,43 +780,67 @@ export default function App() {
     if (status === 'driver_arrived' && !next.arrivedAt) next.arrivedAt = Date.now()
     if (status === 'completed' && !next.completedAt) next.completedAt = Date.now()
     const rides = state.rides.map((r) => (r.orderNo === orderNo ? next : r))
-    const debt = status === 'completed'
-      ? Math.round((state.debt + commissionFor(ride.fare)) * 100) / 100
-      : state.debt
-    update({ rides, debt })
+    // عمولة 5% من الرحلة المكتملة بتتسجل مديونية على ملف السواق نفسه
+    // وبتتحفظ في مستنده على السيرفر — عشان تظهر على أي جهاز
+    let driver = state.driver
+    if (status === 'completed') {
+      driver = { ...driver, debt: Math.round((driver.debt + commissionFor(ride.fare)) * 100) / 100 }
+      void saveDoc('drivers', driver.code, driver as unknown as Record<string, unknown>)
+    }
+    update({ rides, driver })
     void saveDoc('rides', orderNo, next as unknown as Record<string, unknown>)
   }
 
   function submitRating(orderNo: string, by: 'passenger' | 'driver', value: number) {
-    setState((s) => {
-      const rides = s.rides.map((r) => {
-        if (r.orderNo !== orderNo) return r
-        return by === 'passenger'
-          ? { ...r, passengerRatingForDriver: value }
-          : { ...r, driverRatingForPassenger: value }
+    const ride = state.rides.find((r) => r.orderNo === orderNo)
+    if (!ride) return
+    // منع التقييم مرتين لنفس الرحلة — كل ضغطة كانت بتزود العداد وتخرب المتوسط
+    if (by === 'passenger' && ride.passengerRatingForDriver != null) {
+      showNotice('تقييمك للكابتن اتسجل قبل كده.')
+      return
+    }
+    if (by === 'driver' && ride.driverRatingForPassenger != null) {
+      showNotice('تقييمك للعميل اتسجل قبل كده.')
+      return
+    }
+    const updated: Ride = by === 'passenger'
+      ? { ...ride, passengerRatingForDriver: value }
+      : { ...ride, driverRatingForPassenger: value }
+    update({ rides: state.rides.map((r) => (r.orderNo === orderNo ? updated : r)) })
+    void saveDoc('rides', orderNo, updated as unknown as Record<string, unknown>)
+    // متوسط المقصود بالتقييم بيتحدث في مستنده على السيرفر (مش في ملف جهازك)
+    if (by === 'passenger' && ride.driverCode) {
+      void loadDoc('drivers', ride.driverCode).then((doc) => {
+        const avg = (doc?.ratingAvg as number) ?? state.driver.ratingAvg ?? 0
+        const count = (doc?.ratingCount as number) ?? state.driver.ratingCount ?? 0
+        const n = count + 1
+        const next = {
+          ...((doc ?? {}) as Record<string, unknown>),
+          ratingAvg: Math.round(((avg * count + value) / n) * 10) / 10,
+          ratingCount: n,
+        }
+        void saveDoc('drivers', ride.driverCode!, next)
+        if (state.driver.code === ride.driverCode) {
+          update({ driver: { ...state.driver, ratingAvg: next.ratingAvg as number, ratingCount: n } })
+        }
       })
-      const ride = rides.find((r) => r.orderNo === orderNo)
-      let passenger = s.passenger
-      let driver = s.driver
-      if (ride && by === 'passenger' && ride.driverCode) {
-        const n = driver.ratingCount + 1
-        driver = {
-          ...driver,
-          ratingAvg: Math.round(((driver.ratingAvg * driver.ratingCount + value) / n) * 10) / 10,
+    }
+    if (by === 'driver' && ride.passengerPhone) {
+      void loadDoc('passengers', ride.passengerPhone).then((doc) => {
+        const avg = (doc?.ratingAvg as number) ?? state.passenger?.ratingAvg ?? 0
+        const count = (doc?.ratingCount as number) ?? state.passenger?.ratingCount ?? 0
+        const n = count + 1
+        const next = {
+          ...((doc ?? {}) as Record<string, unknown>),
+          ratingAvg: Math.round(((avg * count + value) / n) * 10) / 10,
           ratingCount: n,
         }
-      }
-      if (ride && by === 'driver' && passenger) {
-        const n = passenger.ratingCount + 1
-        passenger = {
-          ...passenger,
-          ratingAvg:
-            Math.round(((passenger.ratingAvg * passenger.ratingCount + value) / n) * 10) / 10,
-          ratingCount: n,
+        void saveDoc('passengers', ride.passengerPhone!, next)
+        if (state.passenger?.phone === ride.passengerPhone) {
+          update({ passenger: { ...state.passenger, ratingAvg: next.ratingAvg as number, ratingCount: n } })
         }
-      }
-      return { ...s, rides, passenger, driver }
-    })
+      })
+    }
     showNotice('شكراً! تقييمك اتسجل.')
   }
 
@@ -872,23 +975,35 @@ export default function App() {
   }
 
   function reviewPayment(id: string, approve: boolean) {
-    setState((s) => {
-      const payment = s.payments.find((p) => p.id === id)
-      if (!payment) return s
-      const payments = s.payments.map((p) =>
-        p.id === id
-          ? { ...p, status: (approve ? 'approved' : 'rejected') as 'approved' | 'rejected' }
-          : p,
-      )
-      if (!approve) return { ...s, payments }
-      return {
-        ...s,
-        payments,
-        debt: Math.max(0, Math.round((s.debt - payment.amount) * 100) / 100),
-        totalPaid: Math.round((s.totalPaid + payment.amount) * 100) / 100,
+    const payment = state.payments.find((p) => p.id === id)
+    if (!payment) return
+    // الطلب اللي اتراجع قبل كده مينفعش يتراجع تاني — الموافقة مرتين كانت بتخصم مرتين
+    if (payment.status !== 'pending') {
+      showNotice('الطلب ده اتراجع قبل كده.')
+      return
+    }
+    const updatedPayment = { ...payment, status: (approve ? 'approved' : 'rejected') as 'approved' | 'rejected' }
+    update({ payments: state.payments.map((p) => (p.id === id ? updatedPayment : p)) })
+    void saveDoc('payments', id, updatedPayment as unknown as Record<string, unknown>)
+    if (!approve) {
+      showNotice('تم رفض الطلب.')
+      return
+    }
+    // خصم المديونية من مستند السواق نفسه على السيرفر — مش من مديونية جهاز الأدمن
+    void loadDoc('drivers', payment.driverCode).then((doc) => {
+      const curDebt = (doc?.debt as number) ?? 0
+      const curPaid = (doc?.totalPaid as number) ?? 0
+      const next = {
+        ...((doc ?? {}) as Record<string, unknown>),
+        debt: Math.max(0, Math.round((curDebt - payment.amount) * 100) / 100),
+        totalPaid: Math.round((curPaid + payment.amount) * 100) / 100,
+      }
+      void saveDoc('drivers', payment.driverCode, next)
+      if (state.driver.code === payment.driverCode) {
+        update({ driver: { ...state.driver, debt: next.debt as number, totalPaid: next.totalPaid as number } })
       }
     })
-    showNotice(approve ? 'تمت الموافقة — المديونية اتخصمت فوراً.' : 'تم رفض الطلب.')
+    showNotice('تمت الموافقة — المديونية اتخصمت فوراً.')
   }
 
   async function uploadIdCard() {
@@ -954,7 +1069,7 @@ export default function App() {
         </span>
       </button>
       <button className="link-btn" onClick={ring}>جرّب صوت التنبيه</button>
-      {isDebtBlocked(state.debt) && (
+      {isDebtBlocked(state.driver.debt) && (
         <p className="warn">⛔ وصلت لحد المديونية ({money(MAX_DEBT_EGP)}) — مش هتستقبل رحلات جديدة لحد ما تسدد.</p>
       )}
       {state.rides.filter((r) => r.status === 'searching').length === 0 && <p>مفيش طلبات دلوقتي.</p>}
@@ -978,9 +1093,9 @@ export default function App() {
               aria-label="سعرك"
             />
             <span>جنيه</span>
-            <button className="btn" disabled={isDebtBlocked(state.debt) || !state.driver.online} onClick={() => sendDriverOffer(r, Math.min(FARE_MAX, Math.max(FARE_MIN, parseInt(offerPrices[r.orderNo] || String(r.fare), 10) || r.fare)))}>ابعت عرضي</button>
+            <button className="btn" disabled={isDebtBlocked(state.driver.debt) || !state.driver.online} onClick={() => sendDriverOffer(r, Math.min(FARE_MAX, Math.max(FARE_MIN, parseInt(offerPrices[r.orderNo] || String(r.fare), 10) || r.fare)))}>ابعت عرضي</button>
           </div>
-          <button className="btn" disabled={isDebtBlocked(state.debt) || !state.driver.online} onClick={() => sendDriverOffer(r, r.fare)}>اقبل بالسعر ({money(r.fare)})</button>
+          <button className="btn" disabled={isDebtBlocked(state.driver.debt) || !state.driver.online} onClick={() => sendDriverOffer(r, r.fare)}>اقبل بالسعر ({money(r.fare)})</button>
         </div>
       ))}
     </div>
@@ -1091,6 +1206,7 @@ export default function App() {
         <input type="checkbox" checked={state.driver.sharingLocation} onChange={(e) => update({ driver: { ...state.driver, sharingLocation: e.target.checked } })} />
         مشاركة موقعي مباشرة (يتحدث كل 5 ثواني)
       </label>
+      <button className="btn danger" onClick={clearDriverVerification}>تسجيل خروج</button>
     </div>
   )
 
@@ -1128,6 +1244,7 @@ export default function App() {
                     <button className="btn" onClick={() => acceptOffer(activeRide, o)}>اختار الكابتن ده</button>
                   </div>
                 ))}
+                <button className="btn danger" onClick={() => cancelRide(activeRide.orderNo, 'العميل ألغى الطلب', 'passenger')}>إلغاء الطلب</button>
               </>
             )}
             {(activeRide.status === 'matched' || activeRide.status === 'driver_arrived' || activeRide.status === 'on_trip') && (
@@ -1232,6 +1349,7 @@ export default function App() {
             </div>
           </div>
           <p>تقييمك: {state.passenger.ratingAvg} ★ ({state.passenger.ratingCount})</p>
+          <button className="btn danger" onClick={clearPassengerVerification}>تسجيل خروج</button>
         </>
       )}
     </div>
@@ -1262,10 +1380,10 @@ export default function App() {
   const walletView = (
     <div className="card">
       <h2><span className="icon-chip green"><IconWallet /></span>محفظة الكابتن</h2>
-      <p>المديونية الحالية: <b>{money(state.debt)}</b> من حد أقصى {money(MAX_DEBT_EGP)}</p>
-      <div className="progress"><div className="progress-fill" style={{ width: `${Math.min(100, (state.debt / MAX_DEBT_EGP) * 100)}%` }} /></div>
-      <p>إجمالي ما سددته: {money(state.totalPaid)} — العمولة 5% من كل رحلة مكتملة تتسجل مديونية تلقائياً.</p>
-      {isDebtBlocked(state.debt) && <p className="warn">⛔ وصلت للحد الأقصى — مش هتستقبل رحلات جديدة لحد ما تسدد.</p>}
+      <p>المديونية الحالية: <b>{money(state.driver.debt)}</b> من حد أقصى {money(MAX_DEBT_EGP)}</p>
+      <div className="progress"><div className="progress-fill" style={{ width: `${Math.min(100, (state.driver.debt / MAX_DEBT_EGP) * 100)}%` }} /></div>
+      <p>إجمالي ما سددته: {money(state.driver.totalPaid)} — العمولة 5% من كل رحلة مكتملة تتسجل مديونية تلقائياً.</p>
+      {isDebtBlocked(state.driver.debt) && <p className="warn">⛔ وصلت للحد الأقصى — مش هتستقبل رحلات جديدة لحد ما تسدد.</p>}
       <h3>حوّل للإدارة</h3>
       <p>محفظة الإدارة: <b>{state.admin.walletNumber || '— لم يحددها الأدمن بعد —'}</b> ({state.admin.walletName || ''})</p>
       <input placeholder="المبلغ المحوّل (جنيه)" inputMode="numeric" value={payAmount} onChange={(e) => setPayAmount(e.target.value)} />
@@ -1374,7 +1492,7 @@ export default function App() {
           </div>
         )}
         <footer className="footer">
-          <p className="muted">ind toktok — الإصدار 20</p>
+          <p className="muted">ind toktok — الإصدار 21</p>
         </footer>
       </div>
     )
@@ -1418,7 +1536,7 @@ export default function App() {
             <button className="link-btn" onClick={() => chooseRole('passenger')}>تبديل — أنا راكب</button>
           </div>
         )}
-        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 20</p>
+        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 21</p>
       </footer>
     </div>
   )
