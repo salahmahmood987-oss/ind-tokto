@@ -4,7 +4,7 @@ import MapView from './MapView'
 import type { MapMode } from './MapView'
 import { IconCheck, IconDriver, IconHistory, IconList, IconPin, IconShield, IconUser, IconWallet } from './icons'
 import logoUrl from './assets/icon-1024.png'
-import { uploadImageAsDataUrl, saveDoc } from './firebaseDb'
+import { firebaseEnabled, subscribeRides, uploadImageAsDataUrl, saveDoc } from './firebaseDb'
 import { otpRemaining, sendOtpCode, verifyOtpCode } from './otp'
 import {
   clientCodeForPhone,
@@ -81,6 +81,76 @@ function rideStatusLabel(s: Ride['status']): string {
     : 'بندور على سواقين…'
 }
 
+// تحويل اسم مكان مكتوب لإحداثيات (بحث مجاني عبر OpenStreetMap — مصر فقط)
+async function geocodePlace(label: string): Promise<{ lat: number; lng: number } | null> {
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=eg&accept-language=ar&q=${encodeURIComponent(label)}`
+    const res = await fetch(url, { headers: { 'Accept-Language': 'ar' } })
+    if (!res.ok) return null
+    const data = await res.json()
+    if (!data?.length) return null
+    return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) }
+  } catch {
+    return null
+  }
+}
+
+function getCurrentPositionPromise(): Promise<GeolocationPosition> {
+  return new Promise((resolve, reject) => {
+    navigator.geolocation?.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 10000 })
+  })
+}
+
+// يحوّل نص المكان لإحداثيات: "موقعي الحالي" من الـ GPS، وأي اسم تاني من البحث
+async function resolvePlace(label: string): Promise<LatLng | null> {
+  const clean = label.trim()
+  if (!clean) return null
+  if (/موقعي الحالي|مكاني الحالي|موقعي|مكاني/.test(clean)) {
+    try {
+      const pos = await getCurrentPositionPromise()
+      return { lat: pos.coords.latitude, lng: pos.coords.longitude, label: 'موقعي الحالي' }
+    } catch {
+      return null
+    }
+  }
+  const g = await geocodePlace(clean)
+  return g ? { lat: g.lat, lng: g.lng, label: clean } : null
+}
+
+// دمج رحلات Firestore مع الرحلات المحلية: الجديدة تتضاف، والتغييرات (حالة/عروض/أوقات) تتحدث
+function mergeRides(local: Ride[], remote: Ride[]): Ride[] {
+  if (!remote.length) return local
+  const byNo = new Map(local.map((r) => [r.orderNo, r]))
+  let changed = false
+  const out = [...local]
+  for (const rr of remote) {
+    const ex = byNo.get(rr.orderNo)
+    if (!ex) {
+      out.push(rr)
+      changed = true
+      continue
+    }
+    const remoteOffers = rr.offers ?? []
+    const offerIds = new Set(remoteOffers.map((o) => o.id))
+    const offers = [...remoteOffers, ...ex.offers.filter((o) => !offerIds.has(o.id))]
+    const same =
+      ex.status === rr.status &&
+      ex.driverCode === rr.driverCode &&
+      ex.driverName === rr.driverName &&
+      ex.acceptedAt === rr.acceptedAt &&
+      ex.arrivedAt === rr.arrivedAt &&
+      ex.completedAt === rr.completedAt &&
+      ex.passengerPhotoUrl === rr.passengerPhotoUrl &&
+      ex.driverPhotoUrl === rr.driverPhotoUrl &&
+      offers.length === ex.offers.length
+    if (!same) {
+      out[out.findIndex((x) => x.orderNo === rr.orderNo)] = { ...ex, ...rr, offers }
+      changed = true
+    }
+  }
+  return changed ? out : local
+}
+
 export default function App() {
   const [state, setState] = useState<AppState>(() => loadState())
   const [role, setRole] = useState<Role>(() => {
@@ -107,6 +177,7 @@ export default function App() {
   const [fareText, setFareText] = useState('25')
   const [search, setSearch] = useState('')
   const [notice, setNotice] = useState('')
+  const [requestBusy, setRequestBusy] = useState(false)
   // تسجيل العميل + OTP
   const [regName, setRegName] = useState('')
   const [regPhone, setRegPhone] = useState('')
@@ -169,6 +240,60 @@ export default function App() {
       cancelled = true
     }
   }, [])
+
+  // ---- رنين التنبيه للكابتن عند وصول طلب جديد ----
+  const audioCtxRef = useRef<AudioContext | null>(null)
+  const seenSearchingRef = useRef<Set<string>>(new Set())
+  const firstRidesRef = useRef(true)
+  function ring() {
+    try {
+      const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+      if (!AC) return
+      if (!audioCtxRef.current) audioCtxRef.current = new AC()
+      const ctx = audioCtxRef.current
+      if (ctx.state === 'suspended') void ctx.resume()
+      const now = ctx.currentTime + 0.05
+      for (let i = 0; i < 3; i++) {
+        const osc = ctx.createOscillator()
+        const gain = ctx.createGain()
+        osc.connect(gain)
+        gain.connect(ctx.destination)
+        osc.type = 'sine'
+        osc.frequency.value = 880
+        const t = now + i * 0.5
+        gain.gain.setValueAtTime(0.0001, t)
+        gain.gain.exponentialRampToValueAtTime(0.3, t + 0.03)
+        gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.4)
+        osc.start(t)
+        osc.stop(t + 0.45)
+      }
+    } catch { /* الصوت مش متاح */ }
+    try {
+      if (navigator.vibrate) navigator.vibrate([400, 200, 400, 200, 400])
+    } catch { /* ignore */ }
+  }
+  // مزامنة حية للرحلات من Firestore — طلبات العملاء توصل للسواق فوراً
+  useEffect(() => {
+    if (!firebaseEnabled) return
+    return subscribeRides((remote) => {
+      setState((s) => {
+        const merged = mergeRides(s.rides, remote)
+        return merged === s.rides ? s : { ...s, rides: merged }
+      })
+    })
+  }, [])
+  // رنين عند طلب جديد والكابتن فاتح التطبيق
+  useEffect(() => {
+    const searching = state.rides.filter((r) => r.status === 'searching')
+    const prev = seenSearchingRef.current
+    const fresh = searching.filter((r) => !prev.has(r.orderNo))
+    seenSearchingRef.current = new Set(searching.map((r) => r.orderNo))
+    if (firstRidesRef.current) {
+      firstRidesRef.current = false
+      return
+    }
+    if (fresh.length > 0 && appRole === 'driver') ring()
+  }, [state.rides, appRole])
 
   // ---- مشاركة موقع السواق المباشر كل 5 ثواني ----
   useEffect(() => {
@@ -264,24 +389,37 @@ export default function App() {
   }
 
   // ---- طلب رحلة ----
-  function requestRide() {
+  async function requestRide() {
     if (!state.passenger) {
       showNotice('سجل برقم تليفونك الأول.')
       return
     }
-    if (!pickup || !destination) {
-      showNotice('حدد نقطة الركوب والوجهة الأول.')
-      return
-    }
-    const orderNum = state.lastOrderNum + 1
-    const ride: Ride = {
-      orderNo: `#${orderNum}`,
-      passengerCode: state.passenger.code,
-      passengerName: state.passenger.name,
-      passengerPhone: state.passenger.phone,
-      passengerRating: state.passenger.ratingAvg,
-      pickup,
-      destination,
+    setRequestBusy(true)
+    try {
+      // لو العميل كتب اسم المكان بس من غير ما يحدده على الخريطة، نجيب إحداثياته بالبحث
+      let from = pickup
+      let to = destination
+      if (!from && pickupLabel.trim()) {
+        from = await resolvePlace(pickupLabel.trim())
+        if (from) setPickup(from)
+      }
+      if (!to && destLabel.trim()) {
+        to = await resolvePlace(destLabel.trim())
+        if (to) setDestination(to)
+      }
+      if (!from || !to) {
+        showNotice('حدد نقطة الركوب والوجهة الأول — اكتب اسم المكان أو حدّده على الخريطة.')
+        return
+      }
+      const orderNum = state.lastOrderNum + 1
+      const ride: Ride = {
+        orderNo: `#${orderNum}`,
+        passengerCode: state.passenger.code,
+        passengerName: state.passenger.name,
+        passengerPhone: state.passenger.phone,
+        passengerRating: state.passenger.ratingAvg,
+        pickup: from,
+        destination: to,
       fare,
       status: 'searching',
       driverCode: null,
@@ -330,6 +468,9 @@ export default function App() {
         })
       }, 2000 + i * 1500)
     })
+    } finally {
+      setRequestBusy(false)
+    }
   }
 
   function acceptOffer(ride: Ride, offer: Offer) {
@@ -345,25 +486,22 @@ export default function App() {
       driverPhotoUrl: offer.driverPhotoUrl ?? null,
     }
     update({ rides: state.rides.map((r) => (r.orderNo === ride.orderNo ? updated : r)) })
+    void saveDoc('rides', ride.orderNo, updated as unknown as Record<string, unknown>)
     showNotice(`الكابتن ${offer.driverName} في الطريق إليك.`)
   }
 
   function setRideStatus(orderNo: string, status: Ride['status']) {
-    setState((s) => {
-      const rides = s.rides.map((r) => {
-        if (r.orderNo !== orderNo) return r
-        const next: Ride = { ...r, status }
-        if (status === 'driver_arrived' && !next.arrivedAt) next.arrivedAt = Date.now()
-        if (status === 'completed' && !next.completedAt) next.completedAt = Date.now()
-        return next
-      })
-      const ride = rides.find((r) => r.orderNo === orderNo)
-      if (status === 'completed' && ride) {
-        const commission = commissionFor(ride.fare)
-        return { ...s, rides, debt: Math.round((s.debt + commission) * 100) / 100 }
-      }
-      return { ...s, rides }
-    })
+    const ride = state.rides.find((r) => r.orderNo === orderNo)
+    if (!ride) return
+    const next: Ride = { ...ride, status }
+    if (status === 'driver_arrived' && !next.arrivedAt) next.arrivedAt = Date.now()
+    if (status === 'completed' && !next.completedAt) next.completedAt = Date.now()
+    const rides = state.rides.map((r) => (r.orderNo === orderNo ? next : r))
+    const debt = status === 'completed'
+      ? Math.round((state.debt + commissionFor(ride.fare)) * 100) / 100
+      : state.debt
+    update({ rides, debt })
+    void saveDoc('rides', orderNo, next as unknown as Record<string, unknown>)
   }
 
   function submitRating(orderNo: string, by: 'passenger' | 'driver', value: number) {
@@ -593,6 +731,7 @@ export default function App() {
         <input type="checkbox" checked={state.driver.online} onChange={(e) => update({ driver: { ...state.driver, online: e.target.checked } })} />
         متاح لاستقبال الرحلات
       </label>
+      <button className="link-btn" onClick={ring}>جرّب صوت التنبيه</button>
       {isDebtBlocked(state.debt) && (
         <p className="warn">⛔ وصلت لحد المديونية ({money(MAX_DEBT_EGP)}) — مش هتستقبل رحلات جديدة لحد ما تسدد.</p>
       )}
@@ -607,7 +746,9 @@ export default function App() {
           <br />
           <button className="btn" disabled={isDebtBlocked(state.debt) || !state.driver.online} onClick={() => {
             const offer: Offer = { id: `${r.orderNo}-${state.driver.code}`, rideId: r.orderNo, driverCode: state.driver.code, driverName: state.driver.name || 'الكابتن', driverRating: state.driver.ratingAvg, driverPhotoUrl: state.driver.photoUrl ?? null, price: r.fare, etaMinutes: 5, plate: state.driver.plate, color: state.driver.color, model: state.driver.model }
-            update({ rides: state.rides.map((x) => x.orderNo === r.orderNo ? { ...x, offers: [...x.offers, offer] } : x) })
+            const updatedRide: Ride = { ...r, offers: [...r.offers, offer] }
+            update({ rides: state.rides.map((x) => x.orderNo === r.orderNo ? updatedRide : x) })
+            void saveDoc('rides', r.orderNo, updatedRide as unknown as Record<string, unknown>)
             showNotice('عرضك اتبعت للعميل.')
           }}>اقبل بالسعر ({money(r.fare)})</button>
         </div>
@@ -786,7 +927,7 @@ export default function App() {
         <button className="stepper-btn" onClick={() => setFareText(String(Math.min(FARE_MAX, fare + 5)))}>+</button>
       </div>
       <p className="muted">من {FARE_MIN} لـ {FARE_MAX} جنيه — دوس على الرقم نفسه وعدّله.</p>
-      <button className="btn big" onClick={requestRide}>اطلب توكتوك — {money(fare)}</button>
+      <button className="btn big" onClick={requestRide} disabled={requestBusy}>{requestBusy ? 'بيحدد الأماكن…' : `اطلب توكتوك — ${money(fare)}`}</button>
 
       {activeRide && (
         <div className="ride">
@@ -894,7 +1035,7 @@ export default function App() {
           <button className="btn role-btn" onClick={() => chooseRole('driver')}><IconDriver /> أنا كابتن — عايز أشتغل</button>
         </div>
         <footer className="footer">
-          <p className="muted">ind toktok — الإصدار 12</p>
+          <p className="muted">ind toktok — الإصدار 13</p>
         </footer>
       </div>
     )
@@ -930,7 +1071,7 @@ export default function App() {
             <button className="link-btn" onClick={() => chooseRole('passenger')}>تبديل — أنا راكب</button>
           </div>
         )}
-        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 12</p>
+        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 13</p>
       </footer>
     </div>
   )

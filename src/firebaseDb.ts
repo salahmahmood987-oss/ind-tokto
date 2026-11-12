@@ -21,6 +21,7 @@
 import { isFirebaseConfigured } from './firebaseConfig'
 import { getFirebaseApp } from './firebaseApp'
 import { preparePhotoForFirestore } from './imageUpload'
+import type { Ride } from './types'
 
 export const firebaseEnabled = isFirebaseConfigured
 
@@ -63,4 +64,62 @@ export async function saveDoc(
  */
 export async function uploadImageAsDataUrl(file: File): Promise<string> {
   return preparePhotoForFirestore(file)
+}
+
+/** يحوّل مستند رحلة من Firestore لكائن Ride كامل (مع قيم افتراضية للحقول الجديدة). */
+function normalizeRide(id: string, data: Record<string, unknown>): Ride {
+  const d = data as unknown as Partial<Ride>
+  return {
+    orderNo: d.orderNo ?? id,
+    passengerCode: d.passengerCode ?? '',
+    passengerName: d.passengerName ?? 'عميل',
+    passengerPhone: d.passengerPhone ?? '',
+    passengerRating: d.passengerRating ?? 0,
+    pickup: d.pickup ?? { lat: 0, lng: 0, label: '' },
+    destination: d.destination ?? { lat: 0, lng: 0, label: '' },
+    fare: d.fare ?? 0,
+    status: d.status ?? 'searching',
+    driverCode: d.driverCode ?? null,
+    driverName: d.driverName ?? null,
+    driverLat: d.driverLat ?? null,
+    driverLng: d.driverLng ?? null,
+    driverLocAt: d.driverLocAt ?? null,
+    offers: d.offers ?? [],
+    createdAt: d.createdAt ?? Date.now(),
+    acceptedAt: d.acceptedAt ?? null,
+    arrivedAt: d.arrivedAt ?? null,
+    completedAt: d.completedAt ?? null,
+    passengerPhotoUrl: d.passengerPhotoUrl ?? null,
+    driverPhotoUrl: d.driverPhotoUrl ?? null,
+    passengerRatingForDriver: d.passengerRatingForDriver ?? null,
+    driverRatingForPassenger: d.driverRatingForPassenger ?? null,
+  }
+}
+
+/**
+ * اشتراك حي في مجموعة الرحلات: أي طلب جديد أو تغيير حالة من جهاز تاني
+ * يوصل فوراً للجهاز ده — وده اللي بيخلي طلب العميل يظهر ويرن عند السواق.
+ * يرجع دالة إلغاء الاشتراك. في الوضع التجريبي المحلي يرجع دالة فاضية.
+ */
+export function subscribeRides(cb: (rides: Ride[]) => void): () => void {
+  let unsub: (() => void) | null = null
+  let cancelled = false
+  ;(async () => {
+    try {
+      const db = await getDb()
+      if (!db || cancelled) return
+      const { collection, onSnapshot } = await import('firebase/firestore')
+      unsub = onSnapshot(
+        collection(db, 'rides'),
+        (snap) => cb(snap.docs.map((d) => normalizeRide(d.id, d.data() as Record<string, unknown>))),
+        (err) => console.warn('Firestore rides listen failed:', err),
+      )
+    } catch (e) {
+      console.warn('Firestore rides listen failed:', e)
+    }
+  })()
+  return () => {
+    cancelled = true
+    unsub?.()
+  }
 }
