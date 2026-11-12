@@ -85,3 +85,9 @@ label { font-weight: 700; font-size: 14px; }
 .footer { text-align: center; color: var(--muted); font-size: 13px; }
 .toktok-pin { background: transparent; border: none; }
 .lock-note { display: inline-flex; align-items: center; gap: 6px; background: #f1f5f9; border: 1px dashed #94a3b8; color: #475569; border-radius: 10px; padding: 6px 10px; font-size: 13px; font-weight: 700; }
+
+.footer-links { display: flex; gap: 18px; justify-content: center; }
+
+.role-picker { text-align: center; display: flex; flex-direction: column; gap: 12px; align-items: stretch; }
+.role-picker h2 { margin: 4px 0 0; }
+.role-btn { width: 100%; justify-content: center; padding: 16px; font-size: 17px; }

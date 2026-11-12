@@ -4,9 +4,7 @@ import MapView from './MapView'
 import type { MapMode } from './MapView'
 import { IconCheck, IconDriver, IconPin, IconShield, IconUser, IconWallet } from './icons'
 import logoUrl from './assets/icon-1024.png'
-import { firebaseEnabled } from './firebaseDb'
 import { uploadImageAsDataUrl, saveDoc } from './firebaseDb'
-import { isFirebaseConfigured } from './firebaseConfig'
 import { otpRemaining, sendOtpCode, verifyOtpCode } from './otp'
 import {
   clientCodeForPhone,
@@ -50,7 +48,20 @@ function money(n: number) {
 
 export default function App() {
   const [state, setState] = useState<AppState>(() => loadState())
-  const [role, setRole] = useState<Role>('passenger')
+  const [role, setRole] = useState<Role>(() => {
+    const saved = localStorage.getItem('indtoktok-app-role')
+    return saved === 'driver' ? 'driver' : 'passenger'
+  })
+  // الدور العام للتطبيق (راكب/كابتن) — بيتحفظ على الجهاز، والعميل مبيشوفش غير شاشة الراكب
+  const [appRole, setAppRole] = useState<'passenger' | 'driver' | null>(() => {
+    const saved = localStorage.getItem('indtoktok-app-role')
+    return saved === 'driver' || saved === 'passenger' ? saved : null
+  })
+  function chooseRole(r: 'passenger' | 'driver') {
+    localStorage.setItem('indtoktok-app-role', r)
+    setAppRole(r)
+    setRole(r)
+  }
   const [pickup, setPickup] = useState<LatLng | null>(null)
   const [destination, setDestination] = useState<LatLng | null>(null)
   const [pickupLabel, setPickupLabel] = useState('')
@@ -731,29 +742,54 @@ export default function App() {
     </div>
   )
 
+  // شاشة اختيار الدور أول مرة — العميل مبيشوفش غير الراكب، والكابتن مبيشوفش غير السواق والمحفظة
+  if (appRole === null) {
+    return (
+      <div className="app" dir="rtl">
+        <header className="header">
+          <img src={logoUrl} alt="ind toktok" className="logo" />
+          <h1><span className="brand">ind toktok</span></h1>
+        </header>
+        <div className="card role-picker">
+          <h2>أهلاً بيك في ind toktok</h2>
+          <p className="muted">اختار هتستخدم التطبيق إزاي</p>
+          <button className="btn role-btn" onClick={() => chooseRole('passenger')}><IconUser /> أنا راكب — عايز توكتوك</button>
+          <button className="btn role-btn" onClick={() => chooseRole('driver')}><IconDriver /> أنا كابتن — عايز أشتغل</button>
+        </div>
+        <footer className="footer">
+          <p className="muted">ind toktok — الإصدار 9</p>
+        </footer>
+      </div>
+    )
+  }
+
   return (
     <div className="app" dir="rtl">
       <header className="header">
         <img src={logoUrl} alt="ind toktok" className="logo" />
         <h1><span className="brand">ind toktok</span></h1>
-        <p className="tagline">توكتوك زي inDrive — الراكب يسمّي سعره والسواقين يعرضوا</p>
-        <span className="badge">{isFirebaseConfigured ? '☁️ Firebase متصل' : '🧪 وضع تجريبي محلي — Firebase مش مربوط بعد'}</span>
-        {!firebaseEnabled && <p className="muted">للتشغيل الحقيقي: أنشئ مشروع Firebase باسم ind-toktok والصق الـ config في src/firebaseConfig.ts — شوف README.md</p>}
       </header>
-      <nav className="tabs">
-        <button className={role === 'passenger' ? 'tab active' : 'tab'} onClick={() => setRole('passenger')}><IconUser />راكب</button>
-        <button className={role === 'driver' ? 'tab active' : 'tab'} onClick={() => setRole('driver')}><IconDriver />سواق</button>
-        <button className={role === 'wallet' ? 'tab active' : 'tab'} onClick={() => setRole('wallet')}><IconWallet />محفظة السواق</button>
-        <button className={role === 'admin' ? 'tab active' : 'tab'} onClick={() => setRole('admin')}><IconShield />الإدارة</button>
-      </nav>
+      {appRole === 'driver' && (
+        <nav className="tabs">
+          <button className={role === 'driver' ? 'tab active' : 'tab'} onClick={() => setRole('driver')}><IconDriver />سواق</button>
+          <button className={role === 'wallet' ? 'tab active' : 'tab'} onClick={() => setRole('wallet')}><IconWallet />محفظة السواق</button>
+        </nav>
+      )}
       {notice && <div className="notice">{notice}</div>}
       {role === 'passenger' && passengerView}
       {role === 'driver' && driverView}
       {role === 'wallet' && walletView}
-      {role === 'admin' && adminView}
+      {role === 'admin' && (<><button className="btn small" onClick={() => setRole('driver')}>← رجوع للسواق</button>{adminView}</>)}
       <footer className="footer">
         <p>آخر رحلة: {lastRide ? `${lastRide.orderNo} — ${lastRide.status}` : 'لسه مفيش رحلات'}</p>
-        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 8</p>
+        {appRole === 'passenger' && <button className="link-btn" onClick={() => chooseRole('driver')}>أنا كابتن — دخول السواقين</button>}
+        {appRole === 'driver' && (
+          <div className="footer-links">
+            <button className="link-btn" onClick={() => setRole('admin')}>الإدارة</button>
+            <button className="link-btn" onClick={() => chooseRole('passenger')}>تبديل — أنا راكب</button>
+          </div>
+        )}
+        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 9</p>
       </footer>
     </div>
   )
