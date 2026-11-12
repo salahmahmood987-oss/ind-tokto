@@ -345,6 +345,8 @@ export default function App() {
   const lastRide = [...state.rides].reverse()[0]
   // رحلة الكابتن الحالية ورحلاته السابقة (مكتملة أو ملغاة)
   const myCurrentRide = state.rides.find((r) => r.driverCode === state.driver.code && ['matched', 'driver_arrived', 'on_trip'].includes(r.status))
+  // السواق وصل للعميل؟ لوكيشن الوجهة يظهر له بس بعد الوصول (driver_arrived أو on_trip)
+  const driverArrived = !!myCurrentRide && ['driver_arrived', 'on_trip'].includes(myCurrentRide.status)
   const myPastRides = state.rides
     .filter((r) => r.driverCode === state.driver.code && (r.status === 'completed' || r.status === 'cancelled'))
     .sort((a, b) => b.createdAt - a.createdAt)
@@ -1074,28 +1076,54 @@ export default function App() {
       )}
       {state.rides.filter((r) => r.status === 'searching').length === 0 && <p>مفيش طلبات دلوقتي.</p>}
       {state.rides.filter((r) => r.status === 'searching').map((r) => (
-        <div key={r.orderNo} className="ride">
-          {avatar(r.passengerPhotoUrl, r.passengerName)} <b>{r.orderNo}</b> — {r.passengerName} ({r.passengerCode}) — تقييم العميل: {r.passengerRating} ★
-          <br />من: <span className="lock-note">🔒 نقطة الركوب — هتظهر بعد قبول الطلب</span>
-          <br />إلى: {r.destination.label}
-          <br />السعر المقترح: <b>{money(r.fare)}</b>
-          <br />وقت الطلب: {fmtTime(r.createdAt)}
-          {r.offers.filter((o) => o.driverCode === state.driver.code).map((o) => (
-            <p key={o.id} className="muted">عرضك: <b>{money(o.price)}</b> — مستني العميل يختار.</p>
-          ))}
-          <div className="row">
-            <input
-              className="fare-number"
-              inputMode="numeric"
-              style={{ width: 90 }}
-              value={offerPrices[r.orderNo] ?? String(r.fare)}
-              onChange={(e) => setOfferPrices({ ...offerPrices, [r.orderNo]: e.target.value.replace(/[^0-9]/g, '') })}
-              aria-label="سعرك"
-            />
-            <span>جنيه</span>
-            <button className="btn" disabled={isDebtBlocked(state.driver.debt) || !state.driver.online} onClick={() => sendDriverOffer(r, Math.min(FARE_MAX, Math.max(FARE_MIN, parseInt(offerPrices[r.orderNo] || String(r.fare), 10) || r.fare)))}>ابعت عرضي</button>
+        <div key={r.orderNo} className="request-card">
+          <div className="request-head">
+            {avatar(r.passengerPhotoUrl, r.passengerName)}
+            <div className="who">
+              <b>{r.passengerName}</b> <span className="code">({r.passengerCode})</span>
+              <div className="stars-line">★ {r.passengerRating}</div>
+            </div>
+            <span className="order-badge">{r.orderNo}</span>
           </div>
-          <button className="btn" disabled={isDebtBlocked(state.driver.debt) || !state.driver.online} onClick={() => sendDriverOffer(r, r.fare)}>اقبل بالسعر ({money(r.fare)})</button>
+          <div className="request-route">
+            <div className="route-row">
+              <span className="route-ic gray"><IconPin /></span>
+              <div>
+                <div className="route-label">نقطة الركوب</div>
+                <div className="route-value"><span className="lock-note">🔒 هتظهر بعد قبول الطلب</span></div>
+              </div>
+            </div>
+            <div className="route-row">
+              <span className="route-ic orange"><IconPin /></span>
+              <div>
+                <div className="route-label">الوجهة</div>
+                <div className="route-value">{r.destination.label}</div>
+              </div>
+            </div>
+          </div>
+          <div className="request-fare">
+            <span className="fare-label">السعر المقترح</span>
+            <span className="fare-value">{money(r.fare)}</span>
+          </div>
+          <div className="request-actions">
+            {r.offers.filter((o) => o.driverCode === state.driver.code).map((o) => (
+              <p key={o.id} className="muted">عرضك: <b>{money(o.price)}</b> — مستني العميل يختار.</p>
+            ))}
+            <div className="row">
+              <input
+                className="fare-number"
+                inputMode="numeric"
+                style={{ width: 90 }}
+                value={offerPrices[r.orderNo] ?? String(r.fare)}
+                onChange={(e) => setOfferPrices({ ...offerPrices, [r.orderNo]: e.target.value.replace(/[^0-9]/g, '') })}
+                aria-label="سعرك"
+              />
+              <span>جنيه</span>
+              <button className="btn" disabled={isDebtBlocked(state.driver.debt) || !state.driver.online} onClick={() => sendDriverOffer(r, Math.min(FARE_MAX, Math.max(FARE_MIN, parseInt(offerPrices[r.orderNo] || String(r.fare), 10) || r.fare)))}>ابعت عرضي</button>
+            </div>
+            <button className="btn" disabled={isDebtBlocked(state.driver.debt) || !state.driver.online} onClick={() => sendDriverOffer(r, r.fare)}>اقبل بالسعر ({money(r.fare)})</button>
+          </div>
+          <p className="muted request-time">وقت الطلب: {fmtTime(r.createdAt)}</p>
         </div>
       ))}
     </div>
@@ -1107,16 +1135,54 @@ export default function App() {
       <h2><span className="icon-chip"><IconHistory /></span>رحلاتي</h2>
       <h3>رحلتي الحالية</h3>
       {myCurrentRide ? (
-        <div className="ride">
-          <b>{myCurrentRide.orderNo}</b> — {avatar(myCurrentRide.passengerPhotoUrl, myCurrentRide.passengerName)} {myCurrentRide.passengerName} — {rideStatusLabel(myCurrentRide.status)}
-          <br />من: {myCurrentRide.pickup.label} — إلى: {myCurrentRide.destination.label}
-          <br />
-          <a className="link" target="_blank" rel="noreferrer" href={`https://www.google.com/maps/dir/?api=1&destination=${myCurrentRide.pickup.lat},${myCurrentRide.pickup.lng}`}>الاتجاهات لنقطة الركوب ↗</a>
-          {myCurrentRide.driverLat && myCurrentRide.driverLng && (
-            <p className="muted">العميل على بعد {distanceKm({ lat: myCurrentRide.driverLat, lng: myCurrentRide.driverLng }, myCurrentRide.pickup)} كم منك</p>
-          )}
-          <a className="btn" href={`tel:${myCurrentRide.passengerPhone}`}>📞 اتصل بالعميل — {myCurrentRide.passengerPhone}</a>
-          {rideTimes(myCurrentRide)}
+        <div className="request-card">
+          <div className="request-head">
+            {avatar(myCurrentRide.passengerPhotoUrl, myCurrentRide.passengerName)}
+            <div className="who">
+              <b>{myCurrentRide.passengerName}</b>
+              <div className="stars-line">{rideStatusLabel(myCurrentRide.status)}</div>
+            </div>
+            <span className="order-badge">{myCurrentRide.orderNo}</span>
+          </div>
+          <div className="request-route">
+            <div className="route-row">
+              <span className="route-ic green"><IconPin /></span>
+              <div>
+                <div className="route-label">نقطة الركوب</div>
+                <div className="route-value">{myCurrentRide.pickup.label}</div>
+              </div>
+            </div>
+            <div className="route-row">
+              <span className="route-ic orange"><IconPin /></span>
+              <div>
+                <div className="route-label">الوجهة</div>
+                <div className="route-value">{myCurrentRide.destination.label}</div>
+              </div>
+            </div>
+          </div>
+          <div style={{ padding: '0 16px 4px' }}>
+            <MapView
+              pickup={myCurrentRide.pickup}
+              destination={driverArrived ? myCurrentRide.destination : null}
+              driver={state.driver.currentLat && state.driver.currentLng ? { lat: state.driver.currentLat, lng: state.driver.currentLng, label: 'أنت' } : null}
+              pickMode="view"
+              onPick={() => {}}
+            />
+          </div>
+          <div className="request-actions">
+            <a className="link" target="_blank" rel="noreferrer" href={`https://www.google.com/maps/dir/?api=1&destination=${myCurrentRide.pickup.lat},${myCurrentRide.pickup.lng}`}>الاتجاهات لنقطة الركوب ↗</a>
+            {driverArrived && (
+              <>
+                <br />
+                <a className="link" target="_blank" rel="noreferrer" href={`https://www.google.com/maps/dir/?api=1&destination=${myCurrentRide.destination.lat},${myCurrentRide.destination.lng}`}>📍 الاتجاهات للوجهة ↗</a>
+                <p className="notice">وصلت للعميل — لوكيشن الوجهة ظهر دلوقتي على الخريطة.</p>
+              </>
+            )}
+            {myCurrentRide.driverLat && myCurrentRide.driverLng && (
+              <p className="muted">العميل على بعد {distanceKm({ lat: myCurrentRide.driverLat, lng: myCurrentRide.driverLng }, myCurrentRide.pickup)} كم منك</p>
+            )}
+            <a className="btn" href={`tel:${myCurrentRide.passengerPhone}`}>📞 اتصل بالعميل — {myCurrentRide.passengerPhone}</a>
+            {rideTimes(myCurrentRide)}
           <div className="row">
             {myCurrentRide.status === 'matched' && <button className="btn" onClick={() => setRideStatus(myCurrentRide.orderNo, 'driver_arrived')}>وصلت للعميل</button>}
             {myCurrentRide.status === 'driver_arrived' && <button className="btn" onClick={() => setRideStatus(myCurrentRide.orderNo, 'on_trip')}>ابدأ الرحلة</button>}
@@ -1492,7 +1558,7 @@ export default function App() {
           </div>
         )}
         <footer className="footer">
-          <p className="muted">ind toktok — الإصدار 21</p>
+          <p className="muted">ind toktok — الإصدار 22</p>
         </footer>
       </div>
     )
@@ -1536,7 +1602,7 @@ export default function App() {
             <button className="link-btn" onClick={() => chooseRole('passenger')}>تبديل — أنا راكب</button>
           </div>
         )}
-        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 21</p>
+        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 22</p>
       </footer>
     </div>
   )
