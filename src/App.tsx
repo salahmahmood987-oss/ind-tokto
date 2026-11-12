@@ -46,6 +46,23 @@ function money(n: number) {
   return `${n} ج.م`
 }
 
+function fmtTime(ts: number | null | undefined): string {
+  if (!ts) return '—'
+  return new Date(ts).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })
+}
+
+// خط زمني للرحلة: وقت الطلب والقبول والوصول والنهاية
+function rideTimes(r: Ride) {
+  return (
+    <div className="ride-times">
+      <span>وقت الطلب: {fmtTime(r.createdAt)}</span>
+      <span>وقت القبول: {fmtTime(r.acceptedAt)}</span>
+      <span>وصول الكابتن: {fmtTime(r.arrivedAt)}</span>
+      <span>نهاية الرحلة: {fmtTime(r.completedAt)}</span>
+    </div>
+  )
+}
+
 export default function App() {
   const [state, setState] = useState<AppState>(() => loadState())
   const [role, setRole] = useState<Role>(() => {
@@ -62,6 +79,8 @@ export default function App() {
     setAppRole(r)
     setRole(r)
   }
+  // نموذج بيانات الكابتن: ظاهر أول مرة لحد ما يملا بياناته ويدوس حفظ
+  const [driverFormOpen, setDriverFormOpen] = useState(() => !state.driver.name.trim() || !state.driver.phone.trim())
   const [pickup, setPickup] = useState<LatLng | null>(null)
   const [destination, setDestination] = useState<LatLng | null>(null)
   const [pickupLabel, setPickupLabel] = useState('')
@@ -249,6 +268,9 @@ export default function App() {
       driverLocAt: null,
       offers: [],
       createdAt: Date.now(),
+      acceptedAt: null,
+      arrivedAt: null,
+      completedAt: null,
       passengerRatingForDriver: null,
       driverRatingForPassenger: null,
     }
@@ -293,6 +315,7 @@ export default function App() {
       driverLat: ride.pickup.lat + 0.012,
       driverLng: ride.pickup.lng + 0.012,
       driverLocAt: Date.now(),
+      acceptedAt: Date.now(),
     }
     update({ rides: state.rides.map((r) => (r.orderNo === ride.orderNo ? updated : r)) })
     showNotice(`الكابتن ${offer.driverName} في الطريق إليك.`)
@@ -300,7 +323,13 @@ export default function App() {
 
   function setRideStatus(orderNo: string, status: Ride['status']) {
     setState((s) => {
-      const rides = s.rides.map((r) => (r.orderNo === orderNo ? { ...r, status } : r))
+      const rides = s.rides.map((r) => {
+        if (r.orderNo !== orderNo) return r
+        const next: Ride = { ...r, status }
+        if (status === 'driver_arrived' && !next.arrivedAt) next.arrivedAt = Date.now()
+        if (status === 'completed' && !next.completedAt) next.completedAt = Date.now()
+        return next
+      })
       const ride = rides.find((r) => r.orderNo === orderNo)
       if (status === 'completed' && ride) {
         const commission = commissionFor(ride.fare)
@@ -506,14 +535,35 @@ export default function App() {
   const driverView = (
     <div className="card">
       <h2><span className="icon-chip"><IconDriver /></span>بيانات الكابتن</h2>
-      <div className="grid">
-        <input placeholder="الاسم" value={state.driver.name} onChange={(e) => update({ driver: { ...state.driver, name: e.target.value } })} />
-        <input placeholder="رقم التليفون" value={state.driver.phone} onChange={(e) => update({ driver: { ...state.driver, phone: e.target.value } })} />
-        <input placeholder="رقم اللوحة" value={state.driver.plate} onChange={(e) => update({ driver: { ...state.driver, plate: e.target.value } })} />
-        <input placeholder="اللون" value={state.driver.color} onChange={(e) => update({ driver: { ...state.driver, color: e.target.value } })} />
-        <input placeholder="الموديل" value={state.driver.model} onChange={(e) => update({ driver: { ...state.driver, model: e.target.value } })} />
-      </div>
-      <p>كود السواق: <b>{state.driver.code}</b> — التقييم: {state.driver.ratingAvg} ★ ({state.driver.ratingCount})</p>
+      {driverFormOpen ? (
+        <>
+          <div className="grid">
+            <input placeholder="الاسم" value={state.driver.name} onChange={(e) => update({ driver: { ...state.driver, name: e.target.value } })} />
+            <input placeholder="رقم التليفون" value={state.driver.phone} onChange={(e) => update({ driver: { ...state.driver, phone: e.target.value } })} />
+            <input placeholder="رقم اللوحة" value={state.driver.plate} onChange={(e) => update({ driver: { ...state.driver, plate: e.target.value } })} />
+            <input placeholder="اللون" value={state.driver.color} onChange={(e) => update({ driver: { ...state.driver, color: e.target.value } })} />
+            <input placeholder="الموديل" value={state.driver.model} onChange={(e) => update({ driver: { ...state.driver, model: e.target.value } })} />
+          </div>
+          <p>كود السواق: <b>{state.driver.code}</b> — التقييم: {state.driver.ratingAvg} ★ ({state.driver.ratingCount})</p>
+          <h3>صورة البطاقة الشخصية</h3>
+          <p>الصورة بتتضغط تلقائياً قبل الرفع (الحد حوالي 250 كيلوبايت) وتتحفظ في حسابك.</p>
+          <input type="file" accept="image/*" onChange={(e) => setIdCardFile(e.target.files?.[0] || null)} />
+          <button className="btn" onClick={uploadIdCard} disabled={!idCardFile}>رفع صورة البطاقة</button>
+          {state.driver.idCardUrl && (
+            <div>
+              <img src={state.driver.idCardUrl} alt="صورة البطاقة" className="shot" />
+              <p>حالة البطاقة: {state.driver.idCardStatus === 'pending' ? 'بانتظار المراجعة' : state.driver.idCardStatus}</p>
+            </div>
+          )}
+          <button className="btn" onClick={() => setDriverFormOpen(false)} disabled={!state.driver.name.trim() || !state.driver.phone.trim()}>حفظ بياناتي</button>
+        </>
+      ) : (
+        <div className="saved-bar">
+          <IconDriver /> {state.driver.name} — {state.driver.phone} — كودك: <b>{state.driver.code}</b>
+          {state.driver.idCardUrl && <span> — البطاقة: {state.driver.idCardStatus === 'pending' ? 'بانتظار المراجعة' : state.driver.idCardStatus}</span>}
+          <button className="link-btn" onClick={() => setDriverFormOpen(true)}>تعديل بياناتي</button>
+        </div>
+      )}
       <label className="row">
         <input type="checkbox" checked={state.driver.online} onChange={(e) => update({ driver: { ...state.driver, online: e.target.checked } })} />
         متاح لاستقبال الرحلات
@@ -525,16 +575,6 @@ export default function App() {
       {isDebtBlocked(state.debt) && (
         <p className="warn">⛔ وصلت لحد المديونية ({money(MAX_DEBT_EGP)}) — مش هتستقبل رحلات جديدة لحد ما تسدد.</p>
       )}
-      <h3>صورة البطاقة الشخصية</h3>
-      <p>الصورة بتتضغط تلقائياً قبل الرفع (الحد حوالي 250 كيلوبايت) وتتحفظ في حسابك.</p>
-      <input type="file" accept="image/*" onChange={(e) => setIdCardFile(e.target.files?.[0] || null)} />
-      <button className="btn" onClick={uploadIdCard} disabled={!idCardFile}>رفع صورة البطاقة</button>
-      {state.driver.idCardUrl && (
-        <div>
-          <img src={state.driver.idCardUrl} alt="صورة البطاقة" className="shot" />
-          <p>حالة البطاقة: {state.driver.idCardStatus === 'pending' ? 'بانتظار المراجعة' : state.driver.idCardStatus}</p>
-        </div>
-      )}
       <h3>الطلبات الواردة</h3>
       {state.rides.filter((r) => r.status === 'searching').length === 0 && <p>مفيش طلبات دلوقتي.</p>}
       {state.rides.filter((r) => r.status === 'searching').map((r) => (
@@ -543,6 +583,7 @@ export default function App() {
           <br />من: <span className="lock-note">🔒 نقطة الركوب — هتظهر بعد قبول الطلب</span>
           <br />إلى: {r.destination.label}
           <br />السعر المقترح: <b>{money(r.fare)}</b>
+          <br />وقت الطلب: {fmtTime(r.createdAt)}
           <br />
           <button className="btn" disabled={isDebtBlocked(state.debt) || !state.driver.online} onClick={() => {
             const offer: Offer = { id: `${r.orderNo}-${state.driver.code}`, rideId: r.orderNo, driverCode: state.driver.code, driverName: state.driver.name || 'الكابتن', driverRating: state.driver.ratingAvg, price: r.fare, etaMinutes: 5, plate: state.driver.plate, color: state.driver.color, model: state.driver.model }
@@ -558,6 +599,7 @@ export default function App() {
           <br />من: {activeRide.pickup.label} — إلى: {activeRide.destination.label}
           <br />
           <a className="link" target="_blank" rel="noreferrer" href={`https://www.google.com/maps/dir/?api=1&destination=${activeRide.pickup.lat},${activeRide.pickup.lng}`}>الاتجاهات لنقطة الركوب ↗</a>
+          {rideTimes(activeRide)}
           <div className="row">
             {activeRide.status === 'matched' && <button className="btn" onClick={() => setRideStatus(activeRide.orderNo, 'driver_arrived')}>وصلت للعميل</button>}
             {activeRide.status === 'driver_arrived' && <button className="btn" onClick={() => setRideStatus(activeRide.orderNo, 'on_trip')}>ابدأ الرحلة</button>}
@@ -655,6 +697,7 @@ export default function App() {
       {activeRide && (
         <div className="ride">
           <b>{activeRide.orderNo}</b> — {activeRide.status === 'searching' ? 'بندور على سواقين…' : activeRide.status === 'matched' ? `الكابتن ${activeRide.driverName} في الطريق إليك` : activeRide.status}
+          {rideTimes(activeRide)}
           {activeRide.driverLocAt && <p className="muted">موقع السواق اتحدّث {new Date(activeRide.driverLocAt).toLocaleTimeString('ar-EG')}</p>}
           {activeRide.status === 'searching' && activeRide.offers.map((o) => (
             <div key={o.id} className="offer">
@@ -757,7 +800,7 @@ export default function App() {
           <button className="btn role-btn" onClick={() => chooseRole('driver')}><IconDriver /> أنا كابتن — عايز أشتغل</button>
         </div>
         <footer className="footer">
-          <p className="muted">ind toktok — الإصدار 9</p>
+          <p className="muted">ind toktok — الإصدار 10</p>
         </footer>
       </div>
     )
@@ -789,7 +832,7 @@ export default function App() {
             <button className="link-btn" onClick={() => chooseRole('passenger')}>تبديل — أنا راكب</button>
           </div>
         )}
-        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 9</p>
+        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 10</p>
       </footer>
     </div>
   )

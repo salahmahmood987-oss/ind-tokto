@@ -91,3 +91,6 @@ label { font-weight: 700; font-size: 14px; }
 .role-picker { text-align: center; display: flex; flex-direction: column; gap: 12px; align-items: stretch; }
 .role-picker h2 { margin: 4px 0 0; }
 .role-btn { width: 100%; justify-content: center; padding: 16px; font-size: 17px; }
+
+.ride-times { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; margin: 10px 0; font-size: 13px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 10px 12px; }
+.ride-times span { color: #475569; }

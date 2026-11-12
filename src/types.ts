@@ -74,6 +74,12 @@ export interface Ride {
   driverLocAt: number | null
   offers: Offer[]
   createdAt: number
+  /** وقت قبول الطلب (وقت ما الراكب اختار عرض الكابتن) */
+  acceptedAt: number | null
+  /** وقت وصول الكابتن للعميل */
+  arrivedAt: number | null
+  /** وقت نهاية الرحلة */
+  completedAt: number | null
   /** تقييم الراكب للكابتن بعد الرحلة */
   passengerRatingForDriver: number | null
   /** تقييم الكابتن للراكب بعد الرحلة */
