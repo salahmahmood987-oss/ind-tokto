@@ -331,10 +331,17 @@ export default function App() {
         typeof e === 'object' && e !== null && 'code' in e
           ? String((e as { code: unknown }).code)
           : ''
+      const msg =
+        typeof e === 'object' && e !== null && 'message' in e
+          ? String((e as { message: unknown }).message)
+          : ''
+      // بنعرض نص الخطأ نفسه عشان نعرف السبب الحقيقي من لقطة الشاشة
       showNotice(
-        code
-          ? `حصلت مشكلة غير متوقعة أثناء إرسال الكود — حاول تاني. (كود الخطأ: ${code})`
-          : 'حصلت مشكلة غير متوقعة أثناء إرسال الكود — حاول تاني.',
+        msg
+          ? `مشكلة أثناء إرسال الكود: ${msg.slice(0, 220)}`
+          : code
+            ? `حصلت مشكلة غير متوقعة أثناء إرسال الكود — حاول تاني. (كود الخطأ: ${code})`
+            : 'حصلت مشكلة غير متوقعة أثناء إرسال الكود — حاول تاني.',
       )
     } finally {
       setOtpBusy(false)

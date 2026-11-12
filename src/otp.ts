@@ -175,7 +175,14 @@ async function nativeSendOtp(e164: string): Promise<NativeSendOutcome> {
       if (done) return
       done = true
       clearTimeout(timer)
-      void Promise.all(handles.map((h) => h.remove().catch(() => {})))
+      // إزالة المستمعين لازم ما ترميش أي خطأ يكسّر الـ Promise أبداً
+      for (const h of handles) {
+        try {
+          void h.remove().catch(() => {})
+        } catch {
+          // تجاهل
+        }
+      }
       resolve(o)
     }
     const timer = setTimeout(
@@ -275,7 +282,23 @@ export async function sendOtpCode(phone: string): Promise<OtpSendResult> {
   // بل ترسل أحداث: phoneCodeSent (فيه verificationId) أو
   // phoneVerificationCompleted (تحقق فوري/تلقائي) أو phoneVerificationFailed.
   if (Capacitor.isNativePlatform()) {
-    const outcome = await nativeSendOtp(e164)
+    let outcome: Awaited<ReturnType<typeof nativeSendOtp>>
+    try {
+      outcome = await nativeSendOtp(e164)
+    } catch (e) {
+      // أمان إضافي: nativeSendOtp مش مفروض يرمي أبداً، لكن لو رمى لازم
+      // الخطأ يظهر للمستخدم برسالة واضحة بدل ما الزرار يسكت.
+      console.warn('nativeSendOtp threw:', e)
+      const msg =
+        typeof e === 'object' && e !== null && 'message' in e
+          ? String((e as { message: unknown }).message)
+          : 'خطأ غير معروف'
+      return {
+        ok: false,
+        remaining: OTP_MAX_PER_HOUR - recent.length,
+        message: `فشل إرسال الكود: ${msg.slice(0, 200)}`,
+      }
+    }
     if (outcome.kind === 'failed') {
       nativeVerificationId = null
       return {
