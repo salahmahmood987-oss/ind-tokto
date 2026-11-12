@@ -1183,6 +1183,7 @@ export default function App() {
             )}
             <a className="btn" href={`tel:${myCurrentRide.passengerPhone}`}>📞 اتصل بالعميل — {myCurrentRide.passengerPhone}</a>
             {rideTimes(myCurrentRide)}
+          </div>
           <div className="row">
             {myCurrentRide.status === 'matched' && <button className="btn" onClick={() => setRideStatus(myCurrentRide.orderNo, 'driver_arrived')}>وصلت للعميل</button>}
             {myCurrentRide.status === 'driver_arrived' && <button className="btn" onClick={() => setRideStatus(myCurrentRide.orderNo, 'on_trip')}>ابدأ الرحلة</button>}
