@@ -24,11 +24,12 @@ jobs:
           node-version: '22'
           cache: npm
 
-      - name: Setup JDK 17
+      # Capacitor 8 يتطلب JDK 21 (مع JDK 17 يفشل التجميع بخطأ invalid source release: 21)
+      - name: Setup JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
 
       # sdkmanager مش على PATH في جهاز GitHub رغم إن ANDROID_HOME موجود،
       # فنضيف مسار cmdline-tools للـ PATH أولاً.
