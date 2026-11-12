@@ -7,6 +7,9 @@
 // ---------------------------------------------------------------------------
 import { getApp, getApps, initializeApp } from 'firebase/app'
 import type { FirebaseApp } from 'firebase/app'
+// استيراد جانبي: يضمن تنفيذ تسجيل مكون Auth عند تحميل الحزمة
+// (حماية إضافية مع moduleSideEffects في vite.config.ts)
+import 'firebase/auth'
 import { getAuth } from 'firebase/auth'
 import type { Auth } from 'firebase/auth'
 import { firebaseConfig, isFirebaseConfigured } from './firebaseConfig'
