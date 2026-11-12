@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { Geolocation } from '@capacitor/geolocation'
+import { Camera, CameraResultType, CameraSource } from '@capacitor/camera'
 import MapView from './MapView'
 import type { MapMode } from './MapView'
 import { IconCheck, IconDriver, IconHistory, IconList, IconPin, IconShield, IconUser, IconWallet } from './icons'
 import logoUrl from './assets/icon-1024.png'
-import { firebaseEnabled, subscribeRides, uploadImageAsDataUrl, saveDoc } from './firebaseDb'
+import { firebaseEnabled, loadDoc, subscribeRides, uploadImageAsDataUrl, saveDoc } from './firebaseDb'
 import { otpRemaining, sendOtpCode, verifyOtpCode } from './otp'
 import {
   clientCodeForPhone,
@@ -149,6 +150,51 @@ function mergeRides(local: Ride[], remote: Ride[]): Ride[] {
     }
   }
   return changed ? out : local
+}
+
+/**
+ * زرار اختيار صورة — بيقرأ الصورة من الكاميرا أو المعرض عن طريق
+ * البلاجن الأصلي (أوثق بكتير من <input type=file> في WebView، اللي
+ * بيرجع ملفات من المعرض مش بتتقرأ أحياناً). لو البلاجن فشل،
+ * بيرجع لاختيار الملف العادي.
+ */
+function PhotoPicker({ onPick, label }: { onPick: (file: File) => void; label: string }) {
+  const inputRef = useRef<HTMLInputElement | null>(null)
+  async function pick() {
+    try {
+      const photo = await Camera.getPhoto({
+        quality: 85,
+        allowEditing: false,
+        resultType: CameraResultType.DataUrl,
+        source: CameraSource.Prompt,
+      })
+      if (!photo.dataUrl) return
+      const blob = await (await fetch(photo.dataUrl)).blob()
+      const ext = photo.format === 'png' ? 'png' : photo.format === 'webp' ? 'webp' : 'jpg'
+      onPick(new File([blob], `photo.${ext}`, { type: blob.type || 'image/jpeg' }))
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : ''
+      if (msg.toLowerCase().includes('cancel')) return
+      // أي فشل تاني (إذن مرفوض، البلاجن مش متاح...) → اختيار ملف عادي
+      inputRef.current?.click()
+    }
+  }
+  return (
+    <div>
+      <button className="btn small" onClick={pick}>📷 {label}</button>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        style={{ display: 'none' }}
+        onChange={(e) => {
+          const f = e.target.files?.[0]
+          if (f) onPick(f)
+          e.target.value = ''
+        }}
+      />
+    </div>
+  )
 }
 
 export default function App() {
@@ -325,6 +371,34 @@ export default function App() {
     }
     if (fresh.length > 0 && appRole === 'driver') ring()
   }, [state.rides, appRole])
+
+  // استرجاع بيانات العميل من Firestore لو اتمسحت من الموبايل (إعادة تثبيت):
+  // الاسم والصورة والتقييم بيرجعوا من نسخة السيرفر لما تكون القيم المحلية افتراضية
+  useEffect(() => {
+    const phone = verifiedPhones.passenger || state.passenger?.phone
+    if (!phone || !firebaseEnabled) return
+    const p = state.passenger
+    if (p && p.name !== 'عميل' && p.photoUrl && p.ratingCount > 0) return
+    let cancelled = false
+    void loadDoc('passengers', phone).then((doc) => {
+      if (cancelled || !doc) return
+      const cur = state.passenger
+      const merged = {
+        name: cur && cur.name !== 'عميل' ? cur.name : (doc.name as string) || cur?.name || 'عميل',
+        phone,
+        code: clientCodeForPhone(phone),
+        phoneVerified: true,
+        photoUrl: cur?.photoUrl ?? (doc.photoUrl as string | null) ?? null,
+        ratingAvg: cur && cur.ratingCount > 0 ? cur.ratingAvg : (doc.ratingAvg as number) ?? 0,
+        ratingCount: cur && cur.ratingCount > 0 ? cur.ratingCount : (doc.ratingCount as number) ?? 0,
+      }
+      update({ passenger: merged })
+    })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // ---- مشاركة موقع السواق المباشر كل 5 ثواني ----
   useEffect(() => {
@@ -861,7 +935,7 @@ export default function App() {
           <p>كود السواق: <b>{state.driver.code}</b> — التقييم: {state.driver.ratingAvg} ★ ({state.driver.ratingCount})</p>
           <h3>صورة البطاقة الشخصية</h3>
           <p>الصورة بتتضغط تلقائياً قبل الرفع (الحد حوالي 250 كيلوبايت) وتتحفظ في حسابك.</p>
-          <input type="file" accept="image/*" onChange={(e) => setIdCardFile(e.target.files?.[0] || null)} />
+          <PhotoPicker onPick={setIdCardFile} label="اختار صورة البطاقة" />
           <button className="btn" onClick={uploadIdCard} disabled={!idCardFile}>رفع صورة البطاقة</button>
           {state.driver.idCardUrl && (
             <div>
@@ -871,7 +945,7 @@ export default function App() {
           )}
           <h3>صورتي الشخصية (بتظهر للعميل)</h3>
           {state.driver.photoUrl && <img src={state.driver.photoUrl} alt="صورتي الشخصية" className="avatar avatar-lg" />}
-          <input type="file" accept="image/*" onChange={(e) => setProfilePhotoFile(e.target.files?.[0] || null)} />
+          <PhotoPicker onPick={setProfilePhotoFile} label="اختار صورتي" />
           <button className="btn" onClick={() => uploadProfilePhoto('driver')} disabled={!profilePhotoFile}>حفظ صورتي</button>
           <button className="btn" onClick={() => setDriverFormOpen(false)} disabled={!state.driver.name.trim() || !state.driver.phone.trim()}>حفظ بياناتي</button>
         </>
@@ -1005,7 +1079,7 @@ export default function App() {
               <b>ملفي الشخصي — {state.passenger.name}</b>
               <p className="muted">صورتك بتظهر للكابتن لما تطلب رحلة</p>
               <input placeholder="الاسم" value={state.passenger.name} onChange={(e) => { if (state.passenger) update({ passenger: { ...state.passenger, name: e.target.value } }) }} />
-              <input type="file" accept="image/*" onChange={(e) => setProfilePhotoFile(e.target.files?.[0] || null)} />
+              <PhotoPicker onPick={setProfilePhotoFile} label="اختار صورتي" />
               <button className="btn small" onClick={() => uploadProfilePhoto('passenger')} disabled={!profilePhotoFile}>حفظ صورتي</button>
             </div>
           </div>
@@ -1046,7 +1120,7 @@ export default function App() {
       <h3>حوّل للإدارة</h3>
       <p>محفظة الإدارة: <b>{state.admin.walletNumber || '— لم يحددها الأدمن بعد —'}</b> ({state.admin.walletName || ''})</p>
       <input placeholder="المبلغ المحوّل (جنيه)" inputMode="numeric" value={payAmount} onChange={(e) => setPayAmount(e.target.value)} />
-      <input type="file" accept="image/*" onChange={(e) => setPayShot(e.target.files?.[0] || null)} />
+      <PhotoPicker onPick={setPayShot} label="اختار صورة التحويل" />
       <p>صورة التحويل بتتضغط تلقائياً قبل الإرسال (الحد حوالي 250 كيلوبايت).</p>
       <button className="btn" onClick={submitPayment}>ابعت طلب التحويل + صورة التحويل</button>
       <h3>طلباتي</h3>
@@ -1150,7 +1224,7 @@ export default function App() {
           </div>
         )}
         <footer className="footer">
-          <p className="muted">ind toktok — الإصدار 15</p>
+          <p className="muted">ind toktok — الإصدار 16</p>
         </footer>
       </div>
     )
@@ -1194,7 +1268,7 @@ export default function App() {
             <button className="link-btn" onClick={() => chooseRole('passenger')}>تبديل — أنا راكب</button>
           </div>
         )}
-        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 15</p>
+        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 16</p>
       </footer>
     </div>
   )

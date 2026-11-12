@@ -28,7 +28,28 @@ export function dataUrlApproxBytes(dataUrl: string): number {
   return Math.floor(b64.length * 0.75)
 }
 
-/** يقرأ أبعاد أي صورة قابلة للرسم (عنصر img أو ImageBitmap). */
+/** يكشف الصيغة الحقيقية للملف من أول بايتاته (مش من اسمه أو نوعه). */
+async function detectFormat(file: File): Promise<string> {
+  try {
+    const buf = await file.slice(0, 12).arrayBuffer()
+    const b = new Uint8Array(buf)
+    if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'JPEG'
+    if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return 'PNG'
+    if (b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46) return 'WebP'
+    if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46) return 'GIF'
+    const head = new TextDecoder().decode(buf)
+    if (
+      head.includes('ftypheic') ||
+      head.includes('ftypmif1') ||
+      head.includes('ftypheix') ||
+      head.includes('ftyphevc')
+    )
+      return 'HEIC'
+    return 'غير معروفة'
+  } catch {
+    return 'غير معروفة'
+  }
+}
 function drawableSize(img: HTMLImageElement | ImageBitmap): [number, number] {
   if ('naturalWidth' in img) return [img.naturalWidth, img.naturalHeight]
   return [img.width, img.height]
@@ -115,8 +136,18 @@ export async function preparePhotoForFirestore(file: File): Promise<string> {
   try {
     img = await decodeImage(file)
   } catch {
+    const fmt = await detectFormat(file)
+    if (fmt === 'HEIC') {
+      throw new Error(
+        'الصورة دي بصيغة HEIC (من الآيفون) — المتصفح مش بيعرف يقرأها. ' +
+          'حوّلها لـ JPG من إعدادات الكاميرا أو المعرض واختارها تاني.',
+      )
+    }
+    if (fmt === 'غير معروفة') {
+      throw new Error('الملف ده مش صورة أصلاً أو تالف — اختار صورة تانية من الكاميرا أو المعرض.')
+    }
     throw new Error(
-      'مقدرناش نقرأ الصورة دي — جرّب صورة JPG عادية من الكاميرا أو المعرض، ' +
+      `مقدرناش نقرأ الصورة دي (صيغتها ${fmt}) — جرّب تصويرها من الكاميرا مباشرة، ` +
         'أو خد لقطة شاشة للصورة واختارها.',
     )
   }

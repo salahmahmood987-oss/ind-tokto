@@ -40,6 +40,23 @@ async function getDb(): Promise<AnyDb> {
   return dbPromise
 }
 
+/** يقرأ مستنداً واحداً من Firestore — null لو مش موجود أو مفيش إعداد. */
+export async function loadDoc(
+  collection: string,
+  id: string,
+): Promise<Record<string, unknown> | null> {
+  try {
+    const db = await getDb()
+    if (!db) return null
+    const { doc, getDoc } = await import('firebase/firestore')
+    const snap = await getDoc(doc(db, collection, id))
+    return snap.exists() ? (snap.data() as Record<string, unknown>) : null
+  } catch (e) {
+    console.warn('Firestore load failed (demo mode continues):', e)
+    return null
+  }
+}
+
 /** يحفظ مستنداً في Firestore عند توفر الإعداد — وإلا يتجاهل. */
 export async function saveDoc(
   collection: string,
