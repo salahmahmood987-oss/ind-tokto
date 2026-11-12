@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { Geolocation } from '@capacitor/geolocation'
 import MapView from './MapView'
 import type { MapMode } from './MapView'
 import { firebaseEnabled } from './firebaseDb'
@@ -84,6 +85,35 @@ export default function App() {
     .reverse()
     .find((r) => ['searching', 'matched', 'driver_arrived', 'on_trip'].includes(r.status))
   const lastRide = [...state.rides].reverse()[0]
+
+  // ---- طلب إذن الموقع فور فتح التطبيق ----
+  // أول ما التطبيق يفتح نطلب إذن الموقع من النظام، ولو اتوافق عليه
+  // نجيب موقع المستخدم الحالي ونحطه كنقطة ركوب تلقائياً.
+  // لو رفض الإذن التطبيق يكمل عادي وزرار «موقعي الحالي» يفضل موجود.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const perm = await Geolocation.requestPermissions()
+        if (cancelled) return
+        if (perm.location !== 'granted' && perm.coarseLocation !== 'granted') return
+        const pos = await Geolocation.getCurrentPosition({ enableHighAccuracy: true })
+        if (cancelled) return
+        const ll: LatLng = {
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          label: 'موقعي الحالي',
+        }
+        setPickup(ll)
+        setPickupLabel('موقعي الحالي')
+      } catch {
+        // تجاهل: رفض الإذن أو GPS مش متاح
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   // ---- مشاركة موقع السواق المباشر كل 5 ثواني ----
   useEffect(() => {
@@ -722,7 +752,7 @@ export default function App() {
       {role === 'admin' && adminView}
       <footer className="footer">
         <p>آخر رحلة: {lastRide ? `${lastRide.orderNo} — ${lastRide.status}` : 'لسه مفيش رحلات'}</p>
-        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 5</p>
+        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 6</p>
       </footer>
     </div>
   )
