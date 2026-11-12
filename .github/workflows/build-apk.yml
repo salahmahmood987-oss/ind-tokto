@@ -53,8 +53,10 @@ jobs:
       - name: Sync Capacitor Android
         run: npx cap sync android
 
+      # gradlew اترفع على GitHub بدون صلاحية تنفيذ (كل الملفات اترفعت 644)،
+      # فندي له صلاحية التنفيذ قبل البناء.
       - name: Build debug APK
-        run: cd android && ./gradlew assembleDebug --no-daemon --stacktrace
+        run: cd android && chmod +x gradlew && ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
