@@ -73,19 +73,22 @@ jobs:
             -Pandroid.injected.signing.key.password="${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}"
 
       # تحقق من الحزمة: بنية AAB سليمة + targetSdkVersion = 36 (أندرويد 16).
-      # aapt2 مش بيتعرف على صيغة الـ AAB كـ APK، وbundletool مش فيه
-      # أمر dump-manifest، فبنقرأ الـ manifest الثنائي بمحلل Python
-      # خالص (.github/scripts/axml_sdk.py) — متحقق منه على الـ APK.
+      # الـ manifest جوه الـ AAB مخزن كـ protobuf مش XML ثنائي، فلا aapt2
+      # ولا bundletool dump-manifest بيقروه. فالتحقق بيتم بالطريقة الرسمية:
+      # نبني APK شامل (universal) من الـ AAB بـ bundletool، ونقرأ الـ manifest
+      # بتاعه بـ aapt2 (اللي بيقرأ الـ APK عادي).
       - name: Verify AAB
         run: |
           AAB=android/app/build/outputs/bundle/release/app-release.aab
           ls -lh "$AAB"
           unzip -l "$AAB" | head -40
-          mkdir -p /tmp/aab-check
-          unzip -o -q "$AAB" base/manifest/AndroidManifest.xml -d /tmp/aab-check
-          echo "manifest first bytes:"; od -A x -t x1z -N 32 /tmp/aab-check/base/manifest/AndroidManifest.xml || true
-          python3 .github/scripts/axml_sdk.py /tmp/aab-check/base/manifest/AndroidManifest.xml | tee /tmp/sdk.txt
-          grep -q "targetSdkVersion = 36" /tmp/sdk.txt || { echo "ERROR: targetSdkVersion is not 36"; exit 1; }
+          BUNDLETOOL=/tmp/bundletool.jar
+          curl -sSL -o "$BUNDLETOOL" "https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar"
+          java -jar "$BUNDLETOOL" build-apks --bundle="$AAB" --output=/tmp/app.apks --mode=universal
+          mkdir -p /tmp/apks-check
+          unzip -o -q /tmp/app.apks universal.apk -d /tmp/apks-check
+          "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging /tmp/apks-check/universal.apk | grep -E "package:|sdkVersion|targetSdkVersion"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging /tmp/apks-check/universal.apk | grep -q "targetSdkVersion:'36'" || { echo "ERROR: targetSdkVersion is not 36"; exit 1; }
 
       - name: Upload AAB
         uses: actions/upload-artifact@v4
