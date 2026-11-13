@@ -73,14 +73,16 @@ jobs:
             -Pandroid.injected.signing.key.password="${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}"
 
       # تحقق من الحزمة: بنية AAB سليمة + targetSdkVersion = 36 (أندرويد 16).
+      # aapt2 بيقرأ الـ manifest من جوه الـ AAB مباشرة (--file هو المسار
+      # جوه الحزمة، والملف نفسه هو الوسيط الموضعي).
       - name: Verify AAB
         run: |
           AAB=android/app/build/outputs/bundle/release/app-release.aab
           ls -lh "$AAB"
           unzip -l "$AAB" | head -40
-          mkdir -p /tmp/aab-check
-          unzip -o -q "$AAB" base/manifest/AndroidManifest.xml -d /tmp/aab-check
-          "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump xmltree --file /tmp/aab-check/base/manifest/AndroidManifest.xml > /tmp/manifest.txt
+          AAPT="$ANDROID_HOME/build-tools/36.0.0/aapt2"
+          "$AAPT" dump xmltree "$AAB" --file base/manifest/AndroidManifest.xml > /tmp/manifest.txt 2>/tmp/aapt2.err || \
+          "$AAPT" dump xmltree --file base/manifest/AndroidManifest.xml "$AAB" > /tmp/manifest.txt
           grep -E "targetSdkVersion|minSdkVersion|compileSdkVersion" /tmp/manifest.txt || true
           python3 -c "
           import re
