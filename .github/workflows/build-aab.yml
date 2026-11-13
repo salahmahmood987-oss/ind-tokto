@@ -80,7 +80,7 @@ jobs:
           unzip -l "$AAB" | head -40
           mkdir -p /tmp/aab-check
           unzip -o -q "$AAB" base/manifest/AndroidManifest.xml -d /tmp/aab-check
-          "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump xmltree /tmp/aab-check/base/manifest/AndroidManifest.xml > /tmp/manifest.txt
+          "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump xmltree --file /tmp/aab-check/base/manifest/AndroidManifest.xml > /tmp/manifest.txt
           grep -E "targetSdkVersion|minSdkVersion|compileSdkVersion" /tmp/manifest.txt || true
           python3 -c "
           import re
