@@ -83,6 +83,7 @@ jobs:
           unzip -l "$AAB" | head -40
           mkdir -p /tmp/aab-check
           unzip -o -q "$AAB" base/manifest/AndroidManifest.xml -d /tmp/aab-check
+          echo "manifest first bytes:"; od -A x -t x1z -N 32 /tmp/aab-check/base/manifest/AndroidManifest.xml || true
           python3 .github/scripts/axml_sdk.py /tmp/aab-check/base/manifest/AndroidManifest.xml | tee /tmp/sdk.txt
           grep -q "targetSdkVersion = 36" /tmp/sdk.txt || { echo "ERROR: targetSdkVersion is not 36"; exit 1; }
 
