@@ -73,23 +73,23 @@ jobs:
             -Pandroid.injected.signing.key.password="${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}"
 
       # تحقق من الحزمة: بنية AAB سليمة + targetSdkVersion = 36 (أندرويد 16).
-      # aapt2 بيقرأ الـ manifest من جوه الـ AAB مباشرة (--file هو المسار
-      # جوه الحزمة، والملف نفسه هو الوسيط الموضعي).
+      # bundletool هو الأداة الرسمية لقراءة الـ AAB — aapt2 مش بيتعرف على
+      # صيغة الـ AAB كـ APK، فبيفشل بخطأ "could not identify format of APK".
       - name: Verify AAB
         run: |
           AAB=android/app/build/outputs/bundle/release/app-release.aab
           ls -lh "$AAB"
           unzip -l "$AAB" | head -40
-          AAPT="$ANDROID_HOME/build-tools/36.0.0/aapt2"
-          "$AAPT" dump xmltree "$AAB" --file base/manifest/AndroidManifest.xml > /tmp/manifest.txt 2>/tmp/aapt2.err || \
-          "$AAPT" dump xmltree --file base/manifest/AndroidManifest.xml "$AAB" > /tmp/manifest.txt
-          grep -E "targetSdkVersion|minSdkVersion|compileSdkVersion" /tmp/manifest.txt || true
+          BUNDLETOOL=/tmp/bundletool.jar
+          curl -sSL -o "$BUNDLETOOL" "https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar"
+          java -jar "$BUNDLETOOL" dump-manifest --bundle "$AAB" > /tmp/manifest.xml
+          grep -E "targetSdkVersion|minSdkVersion" /tmp/manifest.xml || true
           python3 -c "
           import re
-          txt = open('/tmp/manifest.txt').read()
-          m = re.search(r'targetSdkVersion.*0x([0-9a-fA-F]+)', txt)
+          txt = open('/tmp/manifest.xml').read()
+          m = re.search(r'targetSdkVersion=\"(\d+)\"', txt)
           assert m, 'targetSdkVersion not found in manifest'
-          v = int(m.group(1), 16)
+          v = int(m.group(1))
           print('targetSdkVersion =', v)
           assert v == 36, f'expected targetSdk 36 (Android 16), got {v}'
           "
