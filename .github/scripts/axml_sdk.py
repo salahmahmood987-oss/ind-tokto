@@ -64,12 +64,26 @@ def read_string_pool(data, off):
 def main():
     path = sys.argv[1]
     data = open(path, "rb").read()
-    if len(data) < 8 or struct.unpack_from("<H", data, 0)[0] != 0x0003:
-        print("not a binary AndroidManifest.xml", file=sys.stderr)
+    if len(data) < 8:
+        print("file too small", file=sys.stderr)
+        sys.exit(1)
+    first = struct.unpack_from("<H", data, 0)[0]
+    if first == 0x0003:
+        # Binary XML file: 8-byte file header, then chunks.
+        start_off = 8
+    elif first == RES_STRING_POOL_TYPE:
+        # Some producers emit the string pool as the first chunk.
+        start_off = 0
+    else:
+        print(
+            "not a binary AndroidManifest.xml; first 16 bytes: "
+            + data[:16].hex(" "),
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     strings = []
-    off = 8  # skip the file header
+    off = start_off  # skip the file header (if present)
     result = {}
     while off + 8 <= len(data):
         ctype, header_size, size = struct.unpack_from("<HHI", data, off)
