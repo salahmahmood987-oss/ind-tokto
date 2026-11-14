@@ -5,6 +5,7 @@ import MapView from './MapView'
 import type { MapMode } from './MapView'
 import { IconCheck, IconDriver, IconHistory, IconList, IconPin, IconShield, IconUser, IconWallet } from './icons'
 import logoUrl from './assets/icon-1024.png'
+import { APP_VERSION, VERSION_URL } from './version'
 import { firebaseEnabled, loadDoc, subscribeDrivers, subscribePassengers, subscribePayments, subscribeRides, uploadImageAsDataUrl, saveDoc } from './firebaseDb'
 import { sendOtpCode, verifyOtpCode } from './otp'
 import {
@@ -302,6 +303,8 @@ export default function App() {
   const [adminUserFilter, setAdminUserFilter] = useState<'all' | 'new' | 'old'>('all')
   const [adminUserSearch, setAdminUserSearch] = useState('')
   const [notice, setNotice] = useState('')
+  // تنبيه التحديث: لو فيه إصدار أحدث على الريبو بيظهر مودال بزر تحديث
+  const [availableUpdate, setAvailableUpdate] = useState<{ version: number; apkUrl: string } | null>(null)
   const [requestBusy, setRequestBusy] = useState(false)
   // تسجيل العميل + OTP
   const [regPhone, setRegPhone] = useState('')
@@ -444,6 +447,29 @@ export default function App() {
     return subscribePassengers((remote) => {
       setState((s) => ({ ...s, passengers: remote }))
     })
+  }, [])
+  // فحص التحديثات عند الفتح: لو فيه إصدار أحدث على الريبو يظهر تنبيه جوّه التطبيق
+  useEffect(() => {
+    let cancelled = false
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 6000)
+    fetch(VERSION_URL, { signal: controller.signal })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        clearTimeout(timer)
+        if (cancelled || !data || typeof data.version !== 'number') return
+        if (data.version <= APP_VERSION) return
+        if (localStorage.getItem('indtoktok-update-dismissed') === String(data.version)) return
+        setAvailableUpdate({ version: data.version, apkUrl: typeof data.apkUrl === 'string' ? data.apkUrl : '' })
+      })
+      .catch(() => {
+        // مفيش نت أو الملف مش موجود — نتجاهل بصمت
+      })
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+      controller.abort()
+    }
   }, [])
   // رنين عند طلب جديد والكابتن فاتح التطبيق
   useEffect(() => {
@@ -1656,6 +1682,23 @@ export default function App() {
       </div>
     </div>
   ) : null
+  // مودال التحديث — بيظهر لما يكون فيه إصدار أحدث (قابل للتجاهل، مش إجباري)
+  const dismissUpdate = () => {
+    if (availableUpdate) localStorage.setItem('indtoktok-update-dismissed', String(availableUpdate.version))
+    setAvailableUpdate(null)
+  }
+  const updateModal = availableUpdate ? (
+    <div className="notice-overlay" onClick={dismissUpdate}>
+      <div className="notice-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="notice-icon">⬆</div>
+        <p>في إصدار جديد من ind toktok (v{availableUpdate.version}) — حدّث التطبيق عشان تشوف آخر المميزات والتحسينات.</p>
+        <div className="row">
+          <a className="btn" href={availableUpdate.apkUrl} target="_blank" rel="noreferrer">حدّث دلوقتي ⬇</a>
+          <button className="btn small" onClick={dismissUpdate}>بعدين</button>
+        </div>
+      </div>
+    </div>
+  ) : null
   if (!isVerified) {
     return (
       <div className="app" dir="rtl">
@@ -1664,6 +1707,7 @@ export default function App() {
           <h1><span className="brand">ind toktok</span></h1>
         </header>
         {noticeModal}
+        {updateModal}
         {appRole === null ? (
           <div className="card role-picker">
             <h2>أهلاً بيك في ind toktok</h2>
@@ -1678,7 +1722,7 @@ export default function App() {
           </div>
         )}
         <footer className="footer">
-          <p className="muted">ind toktok — الإصدار 30</p>
+          <p className="muted">ind toktok — الإصدار {APP_VERSION}</p>
         </footer>
       </div>
     )
@@ -1706,6 +1750,7 @@ export default function App() {
         </nav>
       )}
       {noticeModal}
+      {updateModal}
       {role === 'passenger' && passengerView}
       {role === 'myRequests' && passengerTripsView}
       {role === 'driver' && driverView}
@@ -1722,7 +1767,7 @@ export default function App() {
             <button className="link-btn" onClick={() => chooseRole('passenger')}>تبديل — أنا راكب</button>
           </div>
         )}
-        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 30</p>
+        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار {APP_VERSION}</p>
       </footer>
     </div>
   )
