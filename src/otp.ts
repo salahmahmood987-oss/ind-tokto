@@ -13,13 +13,64 @@
 // ---------------------------------------------------------------------------
 import { Capacitor } from '@capacitor/core'
 import { FirebaseAuthentication } from '@capacitor-firebase/authentication'
-import { RecaptchaVerifier, signInWithPhoneNumber } from 'firebase/auth'
+import {
+  RecaptchaVerifier,
+  signInWithCustomToken,
+  signInWithPhoneNumber,
+} from 'firebase/auth'
 import type { ConfirmationResult } from 'firebase/auth'
 import { getFirebaseAuth } from './firebaseApp'
 import { isFirebaseConfigured } from './firebaseConfig'
+import {
+  isOtpWorkerConfigured,
+  requestOtpFromWorker,
+  verifyOtpWithWorker,
+} from './otpWorker'
+import type { WorkerOtpResponse, WorkerVerifyResponse } from './otpWorker'
 import { OTP_MAX_PER_HOUR } from './types'
 
 const OTP_KEY = 'indtoktok_otp_v1'
+
+/**
+ * أرقام الاختبار المسجلة في Firebase console — تكمل مسار Firebase
+ * الحالي (الكود 123456) بدون مناداة الـ Worker وبدون SMS حقيقي.
+ * أي رقم تاني يروح للـ Worker (textbee) لو مضبوط، وإلا لمسار Firebase.
+ */
+const TEST_NUMBERS = new Set(['+201550364683', '+201515149075'])
+
+/** يحوّل خطأ إرسال الـ Worker لرسالة عربية واضحة. */
+function workerSendErrorMessage(w: WorkerOtpResponse): string {
+  switch (w.error) {
+    case 'rate_limited':
+      return (
+        w.message || 'وصلت للحد الأقصى — 3 أكواد بس في الساعة للرقم ده.'
+      )
+    case 'sms_quota':
+    case 'daily_cap':
+      return 'خلصت رسايل التحقق المسموحة لليوم — حاول بكرة.'
+    case 'sms_failed':
+    case 'network':
+      return 'مقدرناش نبعت الكود دلوقتي — حاول تاني بعد شوية.'
+    default:
+      return w.message || 'مقدرناش نبعت الكود دلوقتي — حاول تاني بعد شوية.'
+  }
+}
+
+/** يحوّل خطأ تأكيد الـ Worker لرسالة عربية واضحة. */
+function workerVerifyErrorMessage(w: WorkerVerifyResponse): string {
+  switch (w.error) {
+    case 'invalid_code':
+      return w.message || 'الكود غلط — راجع الرسالة وحاول تاني.'
+    case 'code_expired':
+      return w.message || 'الكود انتهت صلاحيته — اطلب كود جديد.'
+    case 'too_many_attempts':
+      return w.message || 'محاولات كتير غلط — اطلب كود جديد.'
+    case 'network':
+      return 'مشكلة في الاتصال بسيرفر الأكواد — تأكد إن النت شغال وحاول تاني.'
+    default:
+      return w.message || 'الكود غلط — راجع الرسالة وحاول تاني.'
+  }
+}
 
 /** أوقات طلبات الكود في آخر ساعة (timestamps) لكل رقم — حد التطبيق فقط. */
 interface OtpRateRecord {
@@ -272,6 +323,33 @@ export async function sendOtpCode(phone: string): Promise<OtpSendResult> {
     }
   }
 
+  // --- أرقام غير الاختبار + Worker مضبوط: الكود SMS عن طريق textbee ---
+  // الـ Worker بيولّد الكود ويبعت الـ SMS وبيفرض حد 3/ساعة من عنده كمان.
+  // حد التطبيق المحلي اللي فوق يفضل خط دفاع أول، والتسجيل في
+  // localStorage يتم بعد نجاح الإرسال بس (كما هو في مسار Firebase).
+  if (!TEST_NUMBERS.has(e164) && isOtpWorkerConfigured()) {
+    const w = await requestOtpFromWorker(e164)
+    if (!w.ok) {
+      return {
+        ok: false,
+        remaining: OTP_MAX_PER_HOUR - recent.length,
+        waitMinutes: w.waitMinutes,
+        message: workerSendErrorMessage(w),
+      }
+    }
+    records[phone] = { requests: [...recent, now] }
+    save(records)
+    const remaining = OTP_MAX_PER_HOUR - recent.length - 1
+    return {
+      ok: true,
+      e164,
+      remaining,
+      message:
+        w.message ||
+        `الكود اتبعت في رسالة SMS على ${e164} — اكتب الكود اللي وصلك (6 أرقام). فاضل ${remaining} من 3 طلبات في الساعة.`,
+    }
+  }
+
   // --- أندرويد: تحقق أصلي (Native) عبر إضافة Capacitor Firebase ---
   // في الإضافة v8: signInWithPhoneNumber لا ترجع verificationId مباشرة،
   // بل ترسل أحداث: phoneCodeSent (فيه verificationId) أو
@@ -370,13 +448,56 @@ export async function sendOtpCode(phone: string): Promise<OtpSendResult> {
   }
 }
 
-/** يتأكد من الكود اللي وصلك في رسالة SMS (6 أرقام). */
+/**
+ * يتأكد من الكود اللي وصلك في رسالة SMS (6 أرقام).
+ * `phone` اختياري: مسار الـ Worker (textbee) يحتاجه، أما مسار Firebase
+ * فيعتمد على حالة الوحدة (nativeVerificationId / confirmation) فقط.
+ */
 export async function verifyOtpCode(
   input: string,
+  phone?: string,
 ): Promise<{ ok: boolean; message: string }> {
   const code = normalizeDigits(input.trim())
   if (!/^\d{6}$/.test(code)) {
     return { ok: false, message: 'الكود 6 أرقام — اكتب الكود اللي وصلك في رسالة SMS.' }
+  }
+  // --- مسار الـ Worker (أرقام غير الاختبار): الكود اتبعت عن طريق textbee ---
+  // يتفرع هنا بس لو مفيش حالة Firebase معلّقة (أرقام الاختبار بتوصل
+  // هنا ولها nativeVerificationId/confirmation من مسار Firebase).
+  const e164 = phone ? toE164Phone(phone) : null
+  if (
+    e164 &&
+    !TEST_NUMBERS.has(e164) &&
+    isOtpWorkerConfigured() &&
+    !nativeVerificationId &&
+    !confirmation
+  ) {
+    const w = await verifyOtpWithWorker(e164, code)
+    if (!w.ok) {
+      return { ok: false, message: workerVerifyErrorMessage(w) }
+    }
+    if (!w.customToken) {
+      return {
+        ok: false,
+        message:
+          'تم تأكيد الكود، بس حصلت مشكلة في تسجيل الدخول — اطلب كود جديد وحاول تاني.',
+      }
+    }
+    // ثبّت جلسة Firebase بالـ custom token (JS SDK — نفس النسخة اللي
+    // بيستخدمها Firestore). الكود اتأكد عند الـ Worker خلاص؛ لو تثبيت
+    // الجلسة فشل، الدخول يكمل عادي لأن finishAuth مبني على رقم
+    // التليفون مش على Auth — والتحذير يتسجل للتشخيص.
+    const auth = getFirebaseAuth()
+    if (auth) {
+      try {
+        await signInWithCustomToken(auth, w.customToken)
+      } catch (e) {
+        console.warn('signInWithCustomToken failed after Worker OTP verify:', e)
+      }
+    } else {
+      console.warn('Worker OTP verified but Firebase Auth is not available.')
+    }
+    return { ok: true, message: 'تم تأكيد رقمك بنجاح.' }
   }
   // --- أندرويد: تأكيد أصلي ---
   if (Capacitor.isNativePlatform()) {

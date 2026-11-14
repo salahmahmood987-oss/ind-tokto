@@ -34,7 +34,9 @@ import type { PaymentRequest, Ride } from './types'
 
 export const firebaseEnabled = isFirebaseConfigured
 
-/** يتنادى عند فشل أي عملية Firestore — التطبيق بيسجّلها وبيعرضها للمستخدم. */
+/** يتنادى عند فشل أي عملية Firestore — بيتسجّل في الكونسول بس، من غير
+ *  أي رسالة للمستخدم: أخطاء الشبكة العابرة بترجع لوحدها والمزامنة
+ *  بتكمل تلقائياً، والرسالة كانت بتزعج المستخدم على الفاضي. */
 let errorHandler: ((message: string) => void) | null = null
 export function setFirestoreErrorHandler(fn: ((message: string) => void) | null) {
   errorHandler = fn

@@ -5,7 +5,7 @@ import MapView from './MapView'
 import type { MapMode } from './MapView'
 import { IconCheck, IconDriver, IconHistory, IconList, IconPin, IconShield, IconUser, IconWallet } from './icons'
 import logoUrl from './assets/icon-1024.png'
-import { firebaseEnabled, loadDoc, setFirestoreErrorHandler, subscribePayments, subscribeRides, uploadImageAsDataUrl, saveDoc } from './firebaseDb'
+import { firebaseEnabled, loadDoc, subscribePayments, subscribeRides, uploadImageAsDataUrl, saveDoc } from './firebaseDb'
 import { sendOtpCode, verifyOtpCode } from './otp'
 import {
   clientCodeForPhone,
@@ -323,16 +323,6 @@ export default function App() {
   stateRef.current = state
 
   useEffect(() => saveState(state), [state])
-  // أي فشل في Firestore يظهر للمستخدم مرة واحدة في الجلسة بدل ما يفشل بصمت
-  const firestoreErrorShownRef = useRef(false)
-  useEffect(() => {
-    setFirestoreErrorHandler((msg) => {
-      if (firestoreErrorShownRef.current) return
-      firestoreErrorShownRef.current = true
-      showNotice(`تعذر الاتصال بقاعدة البيانات — المزامنة مش شغالة. (${msg.slice(0, 120)})`)
-    })
-    return () => setFirestoreErrorHandler(null)
-  }, [])
 
   const fare = Math.max(
     FARE_MIN,
@@ -938,7 +928,8 @@ export default function App() {
   async function verifyOtp() {
     setOtpBusy(true)
     try {
-      const res = await verifyOtpCode(otpInput)
+      // مسار الـ Worker (textbee) يحتاج الرقم؛ مسار Firebase يتجاهله
+      const res = await verifyOtpCode(otpInput, regPhone.trim())
       if (!res.ok) {
         showNotice(res.message)
         return
@@ -1598,7 +1589,7 @@ export default function App() {
           </div>
         )}
         <footer className="footer">
-          <p className="muted">ind toktok — الإصدار 25</p>
+          <p className="muted">ind toktok — الإصدار 26</p>
         </footer>
       </div>
     )
@@ -1642,7 +1633,7 @@ export default function App() {
             <button className="link-btn" onClick={() => chooseRole('passenger')}>تبديل — أنا راكب</button>
           </div>
         )}
-        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 25</p>
+        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 26</p>
       </footer>
     </div>
   )

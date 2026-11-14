@@ -3,6 +3,9 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
+  "overrides": {
+    "@firebase/app": "0.16.6"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
