@@ -1193,7 +1193,11 @@ export default function App() {
       <h2><span className="icon-chip"><IconList /></span>الطلبات المتاحة</h2>
       <button
         className={`online-toggle ${state.driver.online ? 'on' : 'off'}`}
-        onClick={() => update({ driver: { ...state.driver, online: !state.driver.online } })}
+        onClick={() => {
+          const nextOnline = !state.driver.online
+          // الكابتن وهو متاح لازم يشارك موقعه — من غيره لا هو يشوف المسافة للعميل ولا العميل يشوفه على الخريطة
+          update({ driver: { ...state.driver, online: nextOnline, sharingLocation: nextOnline ? true : state.driver.sharingLocation } })
+        }}
       >
         <span className="switch"><span className="knob" /></span>
         <span className="online-label">
@@ -1201,6 +1205,9 @@ export default function App() {
         </span>
       </button>
       <button className="link-btn" onClick={ring}>جرّب صوت التنبيه</button>
+      {state.driver.online && !state.driver.sharingLocation && (
+        <p className="warn">⚠️ مشاركة الموقع مقفولة — فعّل «مشاركة موقعي مباشرة» من بياناتك تحت، عشان تشوف المسافة للعميل والعملاء يشوفوك على الخريطة.</p>
+      )}
       {isDebtBlocked(state.driver.debt) && (
         <p className="warn">⛔ وصلت لحد المديونية ({money(MAX_DEBT_EGP)}) — مش هتستقبل رحلات جديدة لحد ما تسدد.</p>
       )}
