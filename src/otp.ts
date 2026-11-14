@@ -32,11 +32,11 @@ import { OTP_MAX_PER_HOUR } from './types'
 const OTP_KEY = 'indtoktok_otp_v1'
 
 /**
- * أرقام الاختبار المسجلة في Firebase console — تكمل مسار Firebase
- * الحالي (الكود 123456) بدون مناداة الـ Worker وبدون SMS حقيقي.
- * أي رقم تاني يروح للـ Worker (textbee) لو مضبوط، وإلا لمسار Firebase.
+ * أرقام الاختبار اتمسحت بطلب المستخدم (2026-11-14): المجموعة فاضية،
+ * فكل الأرقام — بما فيها رقم الأدمن — بتروح للـ Worker (textbee SMS
+ * حقيقي). مسار Firebase موجود بس كبديل لو الـ Worker مش مضبوط.
  */
-const TEST_NUMBERS = new Set(['+201550364683', '+201515149075'])
+const TEST_NUMBERS = new Set<string>([])
 
 /** يحوّل خطأ إرسال الـ Worker لرسالة عربية واضحة. */
 function workerSendErrorMessage(w: WorkerOtpResponse): string {
@@ -461,9 +461,8 @@ export async function verifyOtpCode(
   if (!/^\d{6}$/.test(code)) {
     return { ok: false, message: 'الكود 6 أرقام — اكتب الكود اللي وصلك في رسالة SMS.' }
   }
-  // --- مسار الـ Worker (أرقام غير الاختبار): الكود اتبعت عن طريق textbee ---
-  // يتفرع هنا بس لو مفيش حالة Firebase معلّقة (أرقام الاختبار بتوصل
-  // هنا ولها nativeVerificationId/confirmation من مسار Firebase).
+  // --- مسار الـ Worker: الكود اتبعت عن طريق textbee ---
+  // يتفرع هنا بس لو مفيش حالة Firebase معلّقة.
   const e164 = phone ? toE164Phone(phone) : null
   if (
     e164 &&
