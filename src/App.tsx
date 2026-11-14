@@ -636,9 +636,9 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.driver.code])
 
-  // ---- مشاركة موقع السواق المباشر كل 5 ثواني ----
+  // مشاركة موقع السواق إجبارية وهو متاح — من غير موقع حقيقي مفيش طلبات ولا مسافات
   useEffect(() => {
-    if (!state.driver.sharingLocation || !state.driver.online) return
+    if (!state.driver.online) return
     const tick = () => {
       navigator.geolocation?.getCurrentPosition(
         (pos) => {
@@ -662,22 +662,7 @@ export default function App() {
           }))
         },
         () => {
-          // بدون GPS: حركة تجريبية قرب نقطة الركوب
-          setState((s) => {
-            const r = s.rides.find((x) => x.status === 'matched')
-            if (!r) return s
-            const lat = (r.driverLat ?? r.pickup.lat + 0.01) - 0.001
-            const lng = (r.driverLng ?? r.pickup.lng + 0.01) - 0.001
-            return {
-              ...s,
-              driver: { ...s.driver, currentLat: lat, currentLng: lng },
-              rides: s.rides.map((x) =>
-                x.orderNo === r.orderNo
-                  ? { ...x, driverLat: lat, driverLng: lng, driverLocAt: Date.now() }
-                  : x,
-              ),
-            }
-          })
+          // الموقع مقفول أو مفيش GPS: بنسيب آخر موقع معروف زي ما هو — مفيش حركة وهمية
         },
         { enableHighAccuracy: true },
       )
@@ -685,7 +670,7 @@ export default function App() {
     tick()
     const id = setInterval(tick, 5000)
     return () => clearInterval(id)
-  }, [state.driver.sharingLocation, state.driver.online])
+  }, [state.driver.online])
 
   function update(patch: Partial<AppState>) {
     setState((s) => ({ ...s, ...patch }))
@@ -1187,17 +1172,35 @@ export default function App() {
       return distanceKm(driverPos, a.pickup) - distanceKm(driverPos, b.pickup)
     })
 
+  // الكابتن مينفعش يبقى متاح من غير موقع حقيقي — لازم GPS شغال وإذن الموقع متوافق عليه
+  async function goOnlineToggle() {
+    if (state.driver.online) {
+      update({ driver: { ...state.driver, online: false } })
+      return
+    }
+    try {
+      const pos = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 })
+      update({
+        driver: {
+          ...state.driver,
+          online: true,
+          sharingLocation: true,
+          currentLat: pos.coords.latitude,
+          currentLng: pos.coords.longitude,
+        },
+      })
+    } catch {
+      showNotice('لازم تشغّل الموقع (GPS) وتدّي التطبيق إذن الموقع — من غيره مش هتقدر تبقى متاح وتستقبل طلبات.')
+    }
+  }
+
   // الصفحة الرئيسية للكابتن: الطلبات المتاحة للقبول فقط
   const driverView = (
     <div className="card">
       <h2><span className="icon-chip"><IconList /></span>الطلبات المتاحة</h2>
       <button
         className={`online-toggle ${state.driver.online ? 'on' : 'off'}`}
-        onClick={() => {
-          const nextOnline = !state.driver.online
-          // الكابتن وهو متاح لازم يشارك موقعه — من غيره لا هو يشوف المسافة للعميل ولا العميل يشوفه على الخريطة
-          update({ driver: { ...state.driver, online: nextOnline, sharingLocation: nextOnline ? true : state.driver.sharingLocation } })
-        }}
+        onClick={() => void goOnlineToggle()}
       >
         <span className="switch"><span className="knob" /></span>
         <span className="online-label">
@@ -1205,8 +1208,8 @@ export default function App() {
         </span>
       </button>
       <button className="link-btn" onClick={ring}>جرّب صوت التنبيه</button>
-      {state.driver.online && !state.driver.sharingLocation && (
-        <p className="warn">⚠️ مشاركة الموقع مقفولة — فعّل «مشاركة موقعي مباشرة» من بياناتك تحت، عشان تشوف المسافة للعميل والعملاء يشوفوك على الخريطة.</p>
+      {state.driver.online && (state.driver.currentLat == null || state.driver.currentLng == null) && (
+        <p className="warn">⚠️ موقعك مش واصل — شغّل الـ GPS عشان المسافات والطلبات تظهر صح.</p>
       )}
       {isDebtBlocked(state.driver.debt) && (
         <p className="warn">⛔ وصلت لحد المديونية ({money(MAX_DEBT_EGP)}) — مش هتستقبل رحلات جديدة لحد ما تسدد.</p>
@@ -1423,10 +1426,7 @@ export default function App() {
           <button className="link-btn" onClick={() => setDriverFormOpen(true)}>تعديل بياناتي</button>
         </div>
       )}
-      <label className="row">
-        <input type="checkbox" checked={state.driver.sharingLocation} onChange={(e) => update({ driver: { ...state.driver, sharingLocation: e.target.checked } })} />
-        مشاركة موقعي مباشرة (يتحدث كل 5 ثواني)
-      </label>
+      <p className="muted">📍 موقعك بيشارك تلقائياً وانت متاح لقبول الطلبات — لازم عشان تشوف المسافة للعميل والعملاء يشوفوك على الخريطة، ومش هتقدر تبقى متاح والموقع مقفول.</p>
       <button className="btn danger" onClick={clearDriverVerification}>تسجيل خروج</button>
     </div>
   )

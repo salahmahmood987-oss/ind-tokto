@@ -48,7 +48,7 @@ export function defaultDriver(): DriverProfile {
     color: '',
     model: '',
     online: false,
-    sharingLocation: false,
+    sharingLocation: true,
     ratingAvg: 0,
     ratingCount: 0,
     debt: 0,
