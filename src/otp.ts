@@ -38,6 +38,13 @@ const OTP_KEY = 'indtoktok_otp_v1'
  */
 const TEST_NUMBERS = new Set<string>([])
 
+/**
+ * أرقام صلاح — من غير حد إرسال (بتاعته، بيجرّب بيها كتير):
+ * معفية من حد التطبيق المحلي (3/ساعة) ومن حد الـ Worker كمان —
+ * الـ Worker فيه نفس القايمة، عدّل الاتنين مع بعض.
+ */
+const UNLIMITED_NUMBERS = new Set(['+201550364683', '+201515149075'])
+
 /** يحوّل خطأ إرسال الـ Worker لرسالة عربية واضحة. */
 function workerSendErrorMessage(w: WorkerOtpResponse): string {
   switch (w.error) {
@@ -304,12 +311,13 @@ export async function sendOtpCode(phone: string): Promise<OtpSendResult> {
     }
   }
 
-  // حد التطبيق: 3 في الساعة لكل رقم (قبل Firebase)
+  // حد التطبيق: 3 في الساعة لكل رقم (قبل Firebase) — أرقام صلاح معفية
+  const unlimited = UNLIMITED_NUMBERS.has(e164)
   const now = Date.now()
   const records = load()
   const rec = records[phone] || { requests: [] }
   const recent = pruneRequests(rec.requests, now)
-  if (recent.length >= OTP_MAX_PER_HOUR) {
+  if (!unlimited && recent.length >= OTP_MAX_PER_HOUR) {
     const oldest = Math.min(...recent)
     const waitMs = 60 * 60 * 1000 - (now - oldest)
     const waitMinutes = Math.max(1, Math.ceil(waitMs / 60000))
@@ -337,16 +345,20 @@ export async function sendOtpCode(phone: string): Promise<OtpSendResult> {
         message: workerSendErrorMessage(w),
       }
     }
-    records[phone] = { requests: [...recent, now] }
-    save(records)
-    const remaining = OTP_MAX_PER_HOUR - recent.length - 1
+    if (!unlimited) {
+      records[phone] = { requests: [...recent, now] }
+      save(records)
+    }
+    const remaining = unlimited ? -1 : OTP_MAX_PER_HOUR - recent.length - 1
     return {
       ok: true,
       e164,
       remaining,
       message:
         w.message ||
-        `الكود اتبعت في رسالة SMS على ${e164} — اكتب الكود اللي وصلك (6 أرقام). فاضل ${remaining} من 3 طلبات في الساعة.`,
+        (unlimited
+          ? `الكود اتبعت في رسالة SMS على ${e164} — اكتب الكود اللي وصلك (6 أرقام).`
+          : `الكود اتبعت في رسالة SMS على ${e164} — اكتب الكود اللي وصلك (6 أرقام). فاضل ${remaining} من 3 طلبات في الساعة.`),
     }
   }
 
@@ -387,10 +399,12 @@ export async function sendOtpCode(phone: string): Promise<OtpSendResult> {
           : outcome.message,
       }
     }
-    // سجّل الطلب بعد الإرسال الناجح بس (مش على الفشل)
-    records[phone] = { requests: [...recent, now] }
-    save(records)
-    const remaining = OTP_MAX_PER_HOUR - recent.length - 1
+    // سجّل الطلب بعد الإرسال الناجح بس (مش على الفشل) — أرقام صلاح مبتتحسبش
+    if (!unlimited) {
+      records[phone] = { requests: [...recent, now] }
+      save(records)
+    }
+    const remaining = unlimited ? -1 : OTP_MAX_PER_HOUR - recent.length - 1
     if (outcome.kind === 'completed') {
       // تحقق فوري: Firebase أكّد الرقم وسجّل الدخول بدون SMS
       nativeVerificationId = null
@@ -407,7 +421,9 @@ export async function sendOtpCode(phone: string): Promise<OtpSendResult> {
       ok: true,
       e164,
       remaining,
-      message: `الكود اتبعت في رسالة SMS على ${e164} — اكتب الكود اللي وصلك (6 أرقام). فاضل ${remaining} من 3 طلبات في الساعة.`,
+      message: unlimited
+        ? `الكود اتبعت في رسالة SMS على ${e164} — اكتب الكود اللي وصلك (6 أرقام).`
+        : `الكود اتبعت في رسالة SMS على ${e164} — اكتب الكود اللي وصلك (6 أرقام). فاضل ${remaining} من 3 طلبات في الساعة.`,
     }
   }
 
@@ -426,15 +442,19 @@ export async function sendOtpCode(phone: string): Promise<OtpSendResult> {
     await verifier.render()
     confirmation = await signInWithPhoneNumber(auth, e164, verifier)
 
-    // سجّل الطلب بعد الإرسال الناجح بس (مش على الفشل)
-    records[phone] = { requests: [...recent, now] }
-    save(records)
-    const remaining = OTP_MAX_PER_HOUR - recent.length - 1
+    // سجّل الطلب بعد الإرسال الناجح بس (مش على الفشل) — أرقام صلاح مبتتحسبش
+    if (!unlimited) {
+      records[phone] = { requests: [...recent, now] }
+      save(records)
+    }
+    const remaining = unlimited ? -1 : OTP_MAX_PER_HOUR - recent.length - 1
     return {
       ok: true,
       e164,
       remaining,
-      message: `الكود اتبعت في رسالة SMS على ${e164} — اكتب الكود اللي وصلك (6 أرقام). فاضل ${remaining} من 3 طلبات في الساعة.`,
+      message: unlimited
+        ? `الكود اتبعت في رسالة SMS على ${e164} — اكتب الكود اللي وصلك (6 أرقام).`
+        : `الكود اتبعت في رسالة SMS على ${e164} — اكتب الكود اللي وصلك (6 أرقام). فاضل ${remaining} من 3 طلبات في الساعة.`,
     }
   } catch (e) {
     console.warn('Firebase Phone Auth send failed:', e)
