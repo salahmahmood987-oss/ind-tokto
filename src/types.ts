@@ -65,6 +65,9 @@ export interface Offer {
   driverPhone: string
   driverRating: number
   driverPhotoUrl: string | null
+  /** موقع الكابتن لحظة إرسال العرض — عشان العميل يشوف المسافة ويرتب بالأقرب */
+  driverLat: number | null
+  driverLng: number | null
   price: number
   etaMinutes: number
   plate: string

@@ -9,6 +9,8 @@ interface MapViewProps {
   pickup: LatLng | null
   destination: LatLng | null
   driver: LatLng | null
+  /** كباتن تانيين على الخريطة (العميل يشوف الكباتن المتاحين حواليه) */
+  drivers?: LatLng[]
   /** أي نقطة يتم تحديدها بالضغط على الخريطة */
   pickMode: MapMode
   onPick: (lat: number, lng: number) => void
@@ -42,6 +44,7 @@ export default function MapView({
   pickup,
   destination,
   driver,
+  drivers = [],
   pickMode,
   onPick,
   height = 300,
@@ -105,9 +108,17 @@ export default function MapView({
       )
       points.push([driver.lat, driver.lng])
     }
+    drivers.forEach((d) => {
+      markersRef.current.push(
+        L.marker([d.lat, d.lng], { icon: toktokIcon() })
+          .addTo(map)
+          .bindPopup(`الكابتن: ${d.label}`),
+      )
+      points.push([d.lat, d.lng])
+    })
     if (points.length > 1) map.fitBounds(L.latLngBounds(points).pad(0.25))
     else if (points.length === 1) map.setView(points[0], 15)
-  }, [pickup, destination, driver])
+  }, [pickup, destination, driver, drivers])
 
   return (
     <div

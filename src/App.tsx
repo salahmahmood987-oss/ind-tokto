@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Geolocation } from '@capacitor/geolocation'
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera'
 import MapView from './MapView'
@@ -779,6 +779,8 @@ export default function App() {
       driverPhone: state.driver.phone,
       driverRating: state.driver.ratingAvg,
       driverPhotoUrl: state.driver.photoUrl ?? null,
+      driverLat: state.driver.currentLat ?? null,
+      driverLng: state.driver.currentLng ?? null,
       price,
       etaMinutes: 5,
       plate: state.driver.plate,
@@ -1112,6 +1114,17 @@ export default function App() {
       .includes(q)
   })
 
+  // الطلبات المتاحة مرتبة بالأقرب للسواق أولاً (اللي من غير موقع يفضل بترتيبه)
+  const driverPos = state.driver.currentLat != null && state.driver.currentLng != null
+    ? { lat: state.driver.currentLat, lng: state.driver.currentLng }
+    : null
+  const availableRides = state.rides
+    .filter((r) => r.status === 'searching')
+    .sort((a, b) => {
+      if (!driverPos) return 0
+      return distanceKm(driverPos, a.pickup) - distanceKm(driverPos, b.pickup)
+    })
+
   // الصفحة الرئيسية للكابتن: الطلبات المتاحة للقبول فقط
   const driverView = (
     <div className="card">
@@ -1129,8 +1142,8 @@ export default function App() {
       {isDebtBlocked(state.driver.debt) && (
         <p className="warn">⛔ وصلت لحد المديونية ({money(MAX_DEBT_EGP)}) — مش هتستقبل رحلات جديدة لحد ما تسدد.</p>
       )}
-      {state.rides.filter((r) => r.status === 'searching').length === 0 && <p>مفيش طلبات دلوقتي.</p>}
-      {state.rides.filter((r) => r.status === 'searching').map((r) => (
+      {availableRides.length === 0 && <p>مفيش طلبات دلوقتي.</p>}
+      {availableRides.map((r) => (
         <div key={r.orderNo} className="request-card">
           <div className="request-head">
             {avatar(r.passengerPhotoUrl, r.passengerName)}
@@ -1139,6 +1152,16 @@ export default function App() {
               <div className="stars-line">★ {r.passengerRating}</div>
             </div>
             <span className="order-badge">{r.orderNo}</span>
+          </div>
+          <div className="map-hero-card">
+            <MapView
+              height={180}
+              pickup={r.pickup}
+              destination={r.destination}
+              driver={state.driver.currentLat && state.driver.currentLng ? { lat: state.driver.currentLat, lng: state.driver.currentLng, label: 'أنت' } : null}
+              pickMode="view"
+              onPick={() => {}}
+            />
           </div>
           <div className="request-route">
             <div className="route-row">
@@ -1156,6 +1179,7 @@ export default function App() {
               <div>
                 <div className="route-label">الوجهة</div>
                 <div className="route-value">{r.destination.label}</div>
+                <div className="muted">المسافة من العميل للوجهة: {distanceKm(r.pickup, r.destination)} كم</div>
               </div>
             </div>
           </div>
@@ -1338,6 +1362,22 @@ export default function App() {
     </div>
   )
 
+  // الكباتن المتاحين على خريطة العميل — أونلاين ومشاركين موقعهم
+  const onlineDrivers = useMemo(
+    () =>
+      state.drivers
+        .filter((d) => d.online && d.currentLat != null && d.currentLng != null)
+        .map((d) => ({ lat: d.currentLat as number, lng: d.currentLng as number, label: d.name })),
+    [state.drivers],
+  )
+  // عروض السواقين مرتبة بالأقرب للعميل أولاً (اللي من غير موقع في الآخر)
+  const offersByDistance = (ride: Ride) =>
+    [...ride.offers].sort((a, b) => {
+      const da = a.driverLat != null && a.driverLng != null ? distanceKm(ride.pickup, { lat: a.driverLat, lng: a.driverLng }) : Infinity
+      const db = b.driverLat != null && b.driverLng != null ? distanceKm(ride.pickup, { lat: b.driverLat, lng: b.driverLng }) : Infinity
+      return da - db
+    })
+
   // نموذج التسجيل برقم التليفون — مشترك بين الرئيسية والملف الشخصي
   // الصفحة الرئيسية للعميل: إنشاء طلب فقط
   const passengerView = (
@@ -1350,6 +1390,7 @@ export default function App() {
               pickup={activeRide.pickup}
               destination={activeRide.destination}
               driver={activeRide.driverLat && activeRide.driverLng ? { lat: activeRide.driverLat, lng: activeRide.driverLng, label: activeRide.driverName || 'الكابتن' } : null}
+              drivers={onlineDrivers}
               pickMode="view"
               onPick={() => {}}
             />
@@ -1368,9 +1409,12 @@ export default function App() {
                   <button className="btn" onClick={() => { const v = parseInt(counterFareText, 10); if (v >= FARE_MIN && v <= FARE_MAX) { updatePassengerFare(activeRide, v); setCounterFareText('') } else showNotice(`السعر من ${FARE_MIN} لـ ${FARE_MAX} جنيه.`) }}>حدّث سعري</button>
                 </div>
                 {activeRide.offers.length === 0 && <p className="muted">لسه مفيش عروض — السواقين هيبعتوا أسعارهم هنا.</p>}
-                {activeRide.offers.map((o) => (
+                {offersByDistance(activeRide).map((o) => (
                   <div key={o.id} className="offer">
                     {avatar(o.driverPhotoUrl, o.driverName)} <b>{o.driverName}</b> — {o.driverRating} ★ — {o.model} {o.color} ({o.plate}) — يوصل في {o.etaMinutes} دقيقة
+                    {o.driverLat != null && o.driverLng != null && (
+                      <> — على بعد {distanceKm(activeRide.pickup, { lat: o.driverLat, lng: o.driverLng })} كم منك</>
+                    )}
                     <br />السعر: <b>{money(o.price)}</b>
                     <button className="btn" onClick={() => acceptOffer(activeRide, o)}>اختار الكابتن ده</button>
                   </div>
@@ -1411,6 +1455,7 @@ export default function App() {
               pickup={pickup}
               destination={destination}
               driver={null}
+              drivers={onlineDrivers}
               pickMode={pickMode}
               onPick={onMapPick}
             />
