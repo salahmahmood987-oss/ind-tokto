@@ -36,8 +36,20 @@ export function isInServiceBBox(lat: number, lng: number): boolean {
   )
 }
 
-/** يجيب اسم المحافظة من الإحداثيات (Nominatim — مجاني) — null لو فشل. */
-async function reverseGovernorate(lat: number, lng: number): Promise<string | null> {
+/** نتيجة تأكيد المحافظة: الاسم + الكود الرسمي ISO (الأدق) */
+interface GovernorateInfo {
+  state: string | null
+  iso: string | null
+}
+
+/**
+ * يجيب اسم المحافظة من الإحداثيات (Nominatim — مجاني) — null لو فشل.
+ *
+ * ⚠️ درس من v33: Nominatim بيكتب أسيوط "Asyut" وسوهاج "Suhaj" بالإنجليزي
+ * (مش Assiut/Sohag) — فالمطابقة بالاسم لوحده كانت بترفض كل الطلبات الصح.
+ * الكود الرسمي ISO3166-2 هو الأدق: أسيوط EG-AST، سوهاج EG-SHG.
+ */
+async function reverseGovernorate(lat: number, lng: number): Promise<GovernorateInfo | null> {
   try {
     const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=10&addressdetails=1&accept-language=en`
     const controller = new AbortController()
@@ -46,19 +58,30 @@ async function reverseGovernorate(lat: number, lng: number): Promise<string | nu
     clearTimeout(timer)
     if (!res.ok) return null
     const data = await res.json()
-    const state = data?.address?.state as string | undefined
-    return state ?? null
+    const address = data?.address ?? {}
+    return {
+      state: typeof address.state === 'string' ? address.state : null,
+      iso: typeof address['ISO3166-2-lvl4'] === 'string' ? address['ISO3166-2-lvl4'] : null,
+    }
   } catch {
     return null
   }
 }
 
-const SERVICE_STATES = [/assiut/i, /sohag/i, /أسيوط/, /سوهاج/]
+/** أسيوط وسوهاج — بالكود الرسمي ISO أولاً، وبعدين بالاسم بكل تهجئاته */
+const SERVICE_ISOS = new Set(['EG-AST', 'EG-SHG'])
+const SERVICE_STATES = [/assiut|asyut|أسيوط/i, /sohag|suhaj|سوهاج/i]
 
 /** النقطة دي جوّه نطاق الخدمة؟ */
 export async function isInServiceArea(lat: number, lng: number): Promise<boolean> {
   if (!isInServiceBBox(lat, lng)) return false
-  const state = await reverseGovernorate(lat, lng)
-  if (!state) return true
-  return SERVICE_STATES.some((re) => re.test(state))
+  const info = await reverseGovernorate(lat, lng)
+  if (!info) return true
+  const iso = info.iso
+  if (iso && SERVICE_ISOS.has(iso)) return true
+  const state = info.state
+  if (state && SERVICE_STATES.some((re) => re.test(state))) return true
+  // لو مفيش اسم محافظة ولا كود (منطقة ناقصة البيانات) بنسمح — المربع هو الفيصل
+  if (!iso && !state) return true
+  return false
 }
