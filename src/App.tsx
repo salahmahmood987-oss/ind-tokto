@@ -338,6 +338,23 @@ export default function App() {
   const [updateBusy, setUpdateBusy] = useState(false)
   const [updateProgress, setUpdateProgress] = useState(0)
   const [updateError, setUpdateError] = useState('')
+  // البطارية الفاضية بتلغي زر التحديث نفسه (مش مجرد تحذير) — بيتفحص أول ما المودال يفتح ويتعاد كل 30 ثانية
+  const [updateBlocked, setUpdateBlocked] = useState('')
+  useEffect(() => {
+    if (!availableUpdate) { setUpdateBlocked(''); return }
+    const check = async () => {
+      try {
+        const info = await Device.getBatteryInfo()
+        const level = Math.round((info.batteryLevel ?? 1) * 100)
+        setUpdateBlocked(!info.isCharging && (info.batteryLevel ?? 1) < 0.2
+          ? `البطارية ${level}% ومش على الشاحن — زر التحديث مقفول لحد ما تشحن لـ 20%، التثبيت على بطارية فاضية بيعلّق.`
+          : '')
+      } catch { setUpdateBlocked('') }
+    }
+    void check()
+    const id = setInterval(() => void check(), 30000)
+    return () => clearInterval(id)
+  }, [availableUpdate])
   const [requestBusy, setRequestBusy] = useState(false)
   // تسجيل العميل + OTP
   const [regPhone, setRegPhone] = useState('')
@@ -1921,9 +1938,10 @@ export default function App() {
       <div className="notice-modal" onClick={(e) => e.stopPropagation()}>
         <div className="notice-icon">⬆</div>
         <p>في إصدار جديد من ind toktok (v{availableUpdate.version}) — حدّث التطبيق عشان تشوف آخر المميزات والتحسينات.</p>
+        {updateBlocked && <p className="muted">{updateBlocked}</p>}
         {updateError && <p className="muted">{updateError}</p>}
         <div className="row">
-          <button className="btn" disabled={updateBusy} onClick={() => installUpdate(availableUpdate.apkUrl)}>{updateBusy ? (updateProgress > 0 ? `بيحمّل التحديث… ${updateProgress}%` : 'بيحمّل التحديث…') : 'حدّث دلوقتي ⬇'}</button>
+          <button className="btn" disabled={updateBusy || !!updateBlocked} onClick={() => installUpdate(availableUpdate.apkUrl)}>{updateBusy ? (updateProgress > 0 ? `بيحمّل التحديث… ${updateProgress}%` : 'بيحمّل التحديث…') : 'حدّث دلوقتي ⬇'}</button>
           <button className="btn small" onClick={dismissUpdate}>بعدين</button>
         </div>
         <button className="btn small" disabled={updateBusy} onClick={() => void Browser.open({ url: availableUpdate.apkUrl })}>التثبيت بيعلّق؟ حمّل من المتصفح</button>
