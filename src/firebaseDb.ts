@@ -30,7 +30,7 @@ import type { Firestore } from 'firebase/firestore'
 import { isFirebaseConfigured } from './firebaseConfig'
 import { getFirebaseApp } from './firebaseApp'
 import { preparePhotoForFirestore } from './imageUpload'
-import type { PaymentRequest, Ride } from './types'
+import type { DriverProfile, PassengerProfile, PaymentRequest, Ride } from './types'
 
 export const firebaseEnabled = isFirebaseConfigured
 
@@ -181,6 +181,87 @@ export function subscribePayments(cb: (payments: PaymentRequest[]) => void): () 
     return () => unsub()
   } catch (e) {
     reportError('مزامنة التحويلات', e)
+    return () => {}
+  }
+}
+
+/** يحوّل مستند سواق من Firestore لملف سواق كامل (تاريخ التسجيل 0 لو مش موجود). */
+function normalizeDriver(id: string, data: Record<string, unknown>): DriverProfile {
+  const d = data as unknown as Partial<DriverProfile>
+  return {
+    name: d.name ?? 'كابتن',
+    phone: d.phone ?? '',
+    code: d.code ?? id,
+    plate: d.plate ?? '',
+    color: d.color ?? '',
+    model: d.model ?? '',
+    online: d.online ?? false,
+    sharingLocation: d.sharingLocation ?? false,
+    ratingAvg: d.ratingAvg ?? 0,
+    ratingCount: d.ratingCount ?? 0,
+    createdAt: d.createdAt ?? 0,
+    debt: d.debt ?? 0,
+    totalPaid: d.totalPaid ?? 0,
+    balance: d.balance ?? 0,
+    idCardUrl: d.idCardUrl ?? null,
+    photoUrl: d.photoUrl ?? null,
+    idCardStatus: d.idCardStatus ?? 'none',
+    currentLat: d.currentLat ?? null,
+    currentLng: d.currentLng ?? null,
+  }
+}
+
+/** يحوّل مستند عميل من Firestore لملف عميل كامل (تاريخ التسجيل 0 لو مش موجود). */
+function normalizePassenger(id: string, data: Record<string, unknown>): PassengerProfile {
+  const d = data as unknown as Partial<PassengerProfile>
+  return {
+    name: d.name ?? 'عميل',
+    phone: d.phone ?? id,
+    code: d.code ?? '',
+    phoneVerified: d.phoneVerified ?? false,
+    photoUrl: d.photoUrl ?? null,
+    ratingAvg: d.ratingAvg ?? 0,
+    ratingCount: d.ratingCount ?? 0,
+    createdAt: d.createdAt ?? 0,
+  }
+}
+
+/**
+ * اشتراك حي في السواقين المسجلين — للإدارة بس: أي سواق جديد يسجل
+ * يظهر فوراً في قسم المستخدمين عند الأدمن.
+ */
+export function subscribeDrivers(cb: (drivers: DriverProfile[]) => void): () => void {
+  try {
+    const db = getDb()
+    if (!db) return () => {}
+    const unsub = onSnapshot(
+      collection(db, 'drivers'),
+      (snap) => cb(snap.docs.map((d) => normalizeDriver(d.id, d.data() as Record<string, unknown>))),
+      (err) => reportError('مزامنة السواقين', err),
+    )
+    return () => unsub()
+  } catch (e) {
+    reportError('مزامنة السواقين', e)
+    return () => {}
+  }
+}
+
+/**
+ * اشتراك حي في العملاء المسجلين — للإدارة بس: أي عميل جديد يسجل
+ * يظهر فوراً في قسم المستخدمين عند الأدمن.
+ */
+export function subscribePassengers(cb: (passengers: PassengerProfile[]) => void): () => void {
+  try {
+    const db = getDb()
+    if (!db) return () => {}
+    const unsub = onSnapshot(
+      collection(db, 'passengers'),
+      (snap) => cb(snap.docs.map((d) => normalizePassenger(d.id, d.data() as Record<string, unknown>))),
+      (err) => reportError('مزامنة العملاء', err),
+    )
+    return () => unsub()
+  } catch (e) {
+    reportError('مزامنة العملاء', e)
     return () => {}
   }
 }

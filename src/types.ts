@@ -16,6 +16,8 @@ export interface PassengerProfile {
   photoUrl: string | null
   ratingAvg: number
   ratingCount: number
+  /** تاريخ التسجيل (أول دخول موثق) — 0 لو مش معروف (مسجل قبل v30) */
+  createdAt: number
 }
 
 export interface DriverProfile {
@@ -30,6 +32,8 @@ export interface DriverProfile {
   sharingLocation: boolean
   ratingAvg: number
   ratingCount: number
+  /** تاريخ التسجيل (أول دخول موثق) — 0 لو مش معروف (مسجل قبل v30) */
+  createdAt: number
   /** مديونية السواق الحالية (عمولات 5% غير مسددة) — متزامنة عبر مستند السواق في Firestore */
   debt: number
   /** إجمالي ما سدده السواق — متزامن عبر مستند السواق في Firestore */

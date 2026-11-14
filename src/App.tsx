@@ -5,7 +5,7 @@ import MapView from './MapView'
 import type { MapMode } from './MapView'
 import { IconCheck, IconDriver, IconHistory, IconList, IconPin, IconShield, IconUser, IconWallet } from './icons'
 import logoUrl from './assets/icon-1024.png'
-import { firebaseEnabled, loadDoc, subscribePayments, subscribeRides, uploadImageAsDataUrl, saveDoc } from './firebaseDb'
+import { firebaseEnabled, loadDoc, subscribeDrivers, subscribePassengers, subscribePayments, subscribeRides, uploadImageAsDataUrl, saveDoc } from './firebaseDb'
 import { sendOtpCode, verifyOtpCode } from './otp'
 import {
   clientCodeForPhone,
@@ -297,6 +297,10 @@ export default function App() {
   const [pickMode, setPickMode] = useState<MapMode>('pickup')
   const [fareText, setFareText] = useState('25')
   const [search, setSearch] = useState('')
+  // قسم المستخدمين عند الأدمن: تبويب سواقين/عملاء + فلتر جدد/قدام/الكل + بحث
+  const [adminUserTab, setAdminUserTab] = useState<'drivers' | 'passengers'>('drivers')
+  const [adminUserFilter, setAdminUserFilter] = useState<'all' | 'new' | 'old'>('all')
+  const [adminUserSearch, setAdminUserSearch] = useState('')
   const [notice, setNotice] = useState('')
   const [requestBusy, setRequestBusy] = useState(false)
   // تسجيل العميل + OTP
@@ -427,6 +431,20 @@ export default function App() {
       })
     })
   }, [])
+  // مزامنة حية للسواقين المسجلين — للإدارة بس: السواق الجديد يظهر فوراً في قسم المستخدمين
+  useEffect(() => {
+    if (!firebaseEnabled) return
+    return subscribeDrivers((remote) => {
+      setState((s) => ({ ...s, drivers: remote }))
+    })
+  }, [])
+  // مزامنة حية للعملاء المسجلين — للإدارة بس: العميل الجديد يظهر فوراً في قسم المستخدمين
+  useEffect(() => {
+    if (!firebaseEnabled) return
+    return subscribePassengers((remote) => {
+      setState((s) => ({ ...s, passengers: remote }))
+    })
+  }, [])
   // رنين عند طلب جديد والكابتن فاتح التطبيق
   useEffect(() => {
     const searching = state.rides.filter((r) => r.status === 'searching')
@@ -477,6 +495,7 @@ export default function App() {
         photoUrl: null as string | null,
         ratingAvg: 0,
         ratingCount: 0,
+        createdAt: Date.now(),
       }
       update({ passenger: profile })
       if (firebaseEnabled) {
@@ -492,6 +511,7 @@ export default function App() {
               photoUrl: (doc.photoUrl as string | null) ?? null,
               ratingAvg: (doc.ratingAvg as number) ?? 0,
               ratingCount: (doc.ratingCount as number) ?? 0,
+              createdAt: (doc.createdAt as number) ?? 0,
             },
           })
         })
@@ -512,6 +532,7 @@ export default function App() {
         photoUrl: cur?.photoUrl ?? (doc.photoUrl as string | null) ?? null,
         ratingAvg: cur && cur.ratingCount > 0 ? cur.ratingAvg : (doc.ratingAvg as number) ?? 0,
         ratingCount: cur && cur.ratingCount > 0 ? cur.ratingCount : (doc.ratingCount as number) ?? 0,
+        createdAt: cur?.createdAt ?? (doc.createdAt as number) ?? 0,
       }
       update({ passenger: merged })
     })
@@ -911,12 +932,14 @@ export default function App() {
         photoUrl: prev?.photoUrl ?? (server?.photoUrl as string | null) ?? null,
         ratingAvg: samePhone ? (prev?.ratingAvg ?? 0) : (server?.ratingAvg as number) ?? 0,
         ratingCount: samePhone ? (prev?.ratingCount ?? 0) : (server?.ratingCount as number) ?? 0,
+        // تاريخ التسجيل: لو راجع (سيرفر موجود) من غير تاريخ يفضل 0 (قديم)؛ لو أول مرة يتحط دلوقتي
+        createdAt: prev?.createdAt ?? (server ? ((server.createdAt as number) ?? 0) : Date.now()),
       }
       update({ passenger: profile })
       void saveDoc('passengers', phone, profile)
       showNotice(`أهلاً ${profile.name}! رقمك اتأكد وكودك ${profile.code}.`)
     } else {
-      const driver = { ...state.driver, phone }
+      const driver = { ...state.driver, phone, createdAt: state.driver.createdAt || Date.now() }
       update({ driver })
       void saveDoc('drivers', driver.code, driver as unknown as Record<string, unknown>)
       showNotice('رقمك اتأكد — أهلاً بيك يا كابتن!')
@@ -1489,6 +1512,39 @@ export default function App() {
     </div>
   )
 
+  // ---- قسم المستخدمين عند الأدمن ----
+  const NEW_USER_DAYS = 7
+  const isNewUser = (createdAt: number) => createdAt > 0 && Date.now() - createdAt < NEW_USER_DAYS * 24 * 3600 * 1000
+  const newDriversCount = state.drivers.filter((d) => isNewUser(d.createdAt)).length
+  const newPassengersCount = state.passengers.filter((p) => isNewUser(p.createdAt)).length
+  const filterAdminUsers = <T,>(list: T[]) => {
+    const typed = list as unknown as { name: string; code: string; phone: string; createdAt: number }[]
+    return typed
+      .filter((u) => (adminUserFilter === 'new' ? isNewUser(u.createdAt) : adminUserFilter === 'old' ? !isNewUser(u.createdAt) : true))
+      .filter((u) => {
+        const q = adminUserSearch.trim()
+        if (!q) return true
+        return [u.name, u.code, u.phone].join(' ').includes(q)
+      })
+      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)) as unknown as T[]
+  }
+  const adminDriverUsers = filterAdminUsers(state.drivers)
+  const adminPassengerUsers = filterAdminUsers(state.passengers)
+  // بطاقات السواقين المستنية المراجعة — كل السواقين مش سواق الجهاز بس
+  const pendingIdCards = [
+    ...state.drivers.filter((d) => d.idCardUrl && d.idCardStatus === 'pending'),
+    ...(state.driver.idCardUrl && state.driver.idCardStatus === 'pending' && !state.drivers.some((d) => d.code === state.driver.code) ? [state.driver] : []),
+  ]
+  async function reviewDriverIdCard(code: string, status: 'approved' | 'rejected') {
+    void saveDoc('drivers', code, { idCardStatus: status })
+    setState((s) => ({
+      ...s,
+      drivers: s.drivers.map((d) => (d.code === code ? { ...d, idCardStatus: status } : d)),
+      driver: s.driver.code === code ? { ...s.driver, idCardStatus: status } : s.driver,
+    }))
+  }
+  const idCardStatusLabel = (s: string) => (s === 'approved' ? 'معتمدة ✅' : s === 'rejected' ? 'مرفوضة ❌' : s === 'pending' ? 'مستنية المراجعة ⏳' : 'مفيش بطاقة')
+
   const adminView = (
     <div className="card">
       <h2><span className="icon-chip"><IconShield /></span>الإدارة — صلاح</h2>
@@ -1512,16 +1568,46 @@ export default function App() {
         </div>
       ))}
       <h3>صور بطاقات السواقين للمراجعة</h3>
-      {state.driver.idCardUrl ? (
-        <div className="ride">
-          {state.driver.name} ({state.driver.code}) — حالة البطاقة: {state.driver.idCardStatus}
-          <img src={state.driver.idCardUrl} alt="بطاقة السواق" className="shot" />
+      {pendingIdCards.length === 0 && <p>مفيش بطاقات مستنية المراجعة.</p>}
+      {pendingIdCards.map((d) => (
+        <div key={d.code} className="ride">
+          {d.name} ({d.code}) — <a className="link" href={`tel:${d.phone}`}>📞 {d.phone}</a>
+          {d.idCardUrl && <img src={d.idCardUrl} alt="بطاقة السواق" className="shot" />}
           <div className="row">
-            <button className="btn" onClick={() => update({ driver: { ...state.driver, idCardStatus: 'approved' } })}>اعتماد البطاقة</button>
-            <button className="btn danger" onClick={() => update({ driver: { ...state.driver, idCardStatus: 'rejected' } })}>رفض البطاقة</button>
+            <button className="btn" onClick={() => reviewDriverIdCard(d.code, 'approved')}>اعتماد البطاقة</button>
+            <button className="btn danger" onClick={() => reviewDriverIdCard(d.code, 'rejected')}>رفض البطاقة</button>
           </div>
         </div>
-      ) : <p>مفيش بطاقات مرفوعة دلوقتي.</p>}
+      ))}
+      <h3>المستخدمون</h3>
+      <p className="muted">🛺 السواقين: {state.drivers.length} • 👤 العملاء: {state.passengers.length} • 🆕 جدد آخر 7 أيام: {newDriversCount + newPassengersCount}</p>
+      <div className="row">
+        <button className={adminUserTab === 'drivers' ? 'btn' : 'btn small'} onClick={() => setAdminUserTab('drivers')}>🛺 السواقين ({state.drivers.length})</button>
+        <button className={adminUserTab === 'passengers' ? 'btn' : 'btn small'} onClick={() => setAdminUserTab('passengers')}>👤 العملاء ({state.passengers.length})</button>
+      </div>
+      <div className="row">
+        <button className={adminUserFilter === 'all' ? 'btn' : 'btn small'} onClick={() => setAdminUserFilter('all')}>الكل</button>
+        <button className={adminUserFilter === 'new' ? 'btn' : 'btn small'} onClick={() => setAdminUserFilter('new')}>🆕 الجدد</button>
+        <button className={adminUserFilter === 'old' ? 'btn' : 'btn small'} onClick={() => setAdminUserFilter('old')}>القدام</button>
+      </div>
+      <input placeholder="🔍 ابحث بالاسم أو الكود أو الرقم…" value={adminUserSearch} onChange={(e) => setAdminUserSearch(e.target.value)} />
+      {adminUserTab === 'drivers' && adminDriverUsers.length === 0 && <p>مفيش سواقين هنا.</p>}
+      {adminUserTab === 'passengers' && adminPassengerUsers.length === 0 && <p>مفيش عملاء هنا.</p>}
+      {adminUserTab === 'drivers' && adminDriverUsers.map((d) => (
+        <div key={d.code} className="ride">
+          {avatar(d.photoUrl, d.name)} <b>{d.name}</b> ({d.code}) — <a className="link" href={`tel:${d.phone}`}>📞 {d.phone}</a>
+          <br />★ {d.ratingAvg} ({d.ratingCount} تقييم) — {d.plate} {d.model} {d.color}
+          <br />مديونية: {money(d.debt)} — رصيد: {money(d.balance)} — إجمالي المسدد: {money(d.totalPaid)}
+          <br />البطاقة: {idCardStatusLabel(d.idCardStatus)} — سجّل: {d.createdAt ? fmtTime(d.createdAt) : 'قبل v30 — التاريخ مش معروف'}
+          {d.idCardUrl && <img src={d.idCardUrl} alt="بطاقة السواق" className="shot" />}
+        </div>
+      ))}
+      {adminUserTab === 'passengers' && adminPassengerUsers.map((p) => (
+        <div key={p.code} className="ride">
+          {avatar(p.photoUrl, p.name)} <b>{p.name}</b> ({p.code}) — <a className="link" href={`tel:${p.phone}`}>📞 {p.phone}</a>
+          <br />★ {p.ratingAvg} ({p.ratingCount} تقييم) — سجّل: {p.createdAt ? fmtTime(p.createdAt) : 'قبل v30 — التاريخ مش معروف'}
+        </div>
+      ))}
       <h3>كل الرحلات</h3>
       <input placeholder="🔍 ابحث برقم الطلب أو الكود أو الاسم أو الرقم…" value={search} onChange={(e) => setSearch(e.target.value)} />
       {filteredRides.map((r) => (
@@ -1592,7 +1678,7 @@ export default function App() {
           </div>
         )}
         <footer className="footer">
-          <p className="muted">ind toktok — الإصدار 29</p>
+          <p className="muted">ind toktok — الإصدار 30</p>
         </footer>
       </div>
     )
@@ -1636,7 +1722,7 @@ export default function App() {
             <button className="link-btn" onClick={() => chooseRole('passenger')}>تبديل — أنا راكب</button>
           </div>
         )}
-        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 29</p>
+        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 30</p>
       </footer>
     </div>
   )

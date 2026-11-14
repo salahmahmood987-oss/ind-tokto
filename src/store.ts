@@ -12,6 +12,10 @@ export interface AppState {
   driver: DriverProfile
   rides: Ride[]
   payments: PaymentRequest[]
+  /** كل السواقين المسجلين (مزامنة حية من Firestore — للإدارة فقط) */
+  drivers: DriverProfile[]
+  /** كل العملاء المسجلين (مزامنة حية من Firestore — للإدارة فقط) */
+  passengers: PassengerProfile[]
   admin: AdminSettings
   /** آخر رقم طلب مستخدم — الطلب الجاي #1001 ثم #1002... */
   lastOrderNum: number
@@ -52,6 +56,7 @@ export function defaultDriver(): DriverProfile {
     photoUrl: null,
     currentLat: null,
     currentLng: null,
+    createdAt: 0,
   }
 }
 
@@ -61,6 +66,8 @@ export function defaultState(): AppState {
     driver: defaultDriver(),
     rides: [],
     payments: [],
+    drivers: [],
+    passengers: [],
     admin: { walletNumber: '', walletName: '' },
     lastOrderNum: 1000,
     lastDriverNum: 1001,
