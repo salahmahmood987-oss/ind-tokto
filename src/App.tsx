@@ -9,7 +9,7 @@ import { IconCheck, IconDriver, IconHistory, IconList, IconPin, IconShield, Icon
 import logoUrl from './assets/icon-1024.png'
 import { APP_VERSION, VERSION_URL } from './version'
 import { firebaseEnabled, loadDoc, subscribeDrivers, subscribePassengers, subscribePayments, subscribeRides, subscribeWaitlist, uploadImageAsDataUrl, saveDoc } from './firebaseDb'
-import { isInServiceArea, OUT_OF_AREA_MESSAGE, OUT_OF_AREA_TITLE } from './geo'
+import { isInServiceArea, isInServiceBBox, OUT_OF_AREA_MESSAGE, OUT_OF_AREA_TITLE } from './geo'
 import { sendOtpCode, verifyOtpCode } from './otp'
 import {
   clientCodeForPhone,
@@ -115,6 +115,24 @@ async function geocodePlace(label: string): Promise<{ lat: number; lng: number }
     return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) }
   } catch {
     return null
+  }
+}
+
+export interface PlaceSuggestion { label: string; lat: number; lng: number }
+
+/** اقتراحات عناوين أثناء الكتابة — زي جوجل ماب (بحث Nominatim المجاني، من غير مفتاح) — مقتصرة على نطاق الخدمة (أسيوط/سوهاج) */
+async function searchPlaces(query: string, signal: AbortSignal): Promise<PlaceSuggestion[]> {
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&countrycodes=eg&limit=5&accept-language=ar&q=${encodeURIComponent(query)}`
+    const res = await fetch(url, { signal, headers: { 'Accept-Language': 'ar' } })
+    if (!res.ok) return []
+    const data = await res.json()
+    if (!Array.isArray(data)) return []
+    return data
+      .map((d) => ({ label: String(d.display_name ?? ''), lat: parseFloat(d.lat), lng: parseFloat(d.lon) }))
+      .filter((s) => s.label && Number.isFinite(s.lat) && Number.isFinite(s.lng) && isInServiceBBox(s.lat, s.lng))
+  } catch {
+    return []
   }
 }
 
@@ -298,6 +316,10 @@ export default function App() {
   const [destination, setDestination] = useState<LatLng | null>(null)
   const [pickupLabel, setPickupLabel] = useState('')
   const [destLabel, setDestLabel] = useState('')
+  // اقتراحات العناوين أثناء الكتابة (نقطة الركوب / الوجهة)
+  const [pickupSugg, setPickupSugg] = useState<PlaceSuggestion[]>([])
+  const [destSugg, setDestSugg] = useState<PlaceSuggestion[]>([])
+  const suggAbortRef = useRef<AbortController | null>(null)
   const [pickMode, setPickMode] = useState<MapMode>('pickup')
   const [fareText, setFareText] = useState('25')
   const [search, setSearch] = useState('')
@@ -1400,6 +1422,43 @@ export default function App() {
     </div>
   )
 
+  // اقتراحات العناوين أثناء الكتابة — بعد 500ms من آخر حرف (من غير ما نضرب السيرفر مع كل حرف)
+  useEffect(() => {
+    const q = pickupLabel.trim()
+    if (q.length < 3 || (pickup && pickup.label === q)) { setPickupSugg([]); return }
+    const t = setTimeout(() => {
+      suggAbortRef.current?.abort()
+      const ctrl = new AbortController()
+      suggAbortRef.current = ctrl
+      void searchPlaces(q, ctrl.signal).then((res) => setPickupSugg(res))
+    }, 500)
+    return () => clearTimeout(t)
+  }, [pickupLabel])
+  useEffect(() => {
+    const q = destLabel.trim()
+    if (q.length < 3 || (destination && destination.label === q)) { setDestSugg([]); return }
+    const t = setTimeout(() => {
+      suggAbortRef.current?.abort()
+      const ctrl = new AbortController()
+      suggAbortRef.current = ctrl
+      void searchPlaces(q, ctrl.signal).then((res) => setDestSugg(res))
+    }, 500)
+    return () => clearTimeout(t)
+  }, [destLabel])
+  /** العميل اختار اقتراح من القايمة — يتعبّى العنوان والإحداثيات على طول */
+  function pickSuggestion(which: 'pickup' | 'destination', s: PlaceSuggestion) {
+    const ll: LatLng = { lat: s.lat, lng: s.lng, label: s.label }
+    if (which === 'pickup') {
+      setPickup(ll)
+      setPickupLabel(s.label)
+      setPickupSugg([])
+    } else {
+      setDestination(ll)
+      setDestLabel(s.label)
+      setDestSugg([])
+    }
+  }
+
   // الكباتن المتاحين على خريطة العميل — أونلاين ومشاركين موقعهم
   const onlineDrivers = useMemo(
     () =>
@@ -1504,7 +1563,18 @@ export default function App() {
             <div className="grid">
             <div>
               <label>نقطة الركوب</label>
-              <input placeholder="منين؟" value={pickupLabel} onChange={(e) => setPickupLabel(e.target.value)} />
+              <div className="suggest-wrap">
+                <input placeholder="منين؟" value={pickupLabel} onChange={(e) => setPickupLabel(e.target.value)} onBlur={() => setPickupSugg([])} />
+                {pickupSugg.length > 0 && (
+                  <div className="suggest-list">
+                    {pickupSugg.map((s) => (
+                      <button key={`${s.lat},${s.lng}`} type="button" className="suggest-item" onMouseDown={(e) => { e.preventDefault(); pickSuggestion('pickup', s) }}>
+                        <IconPin /> {s.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
               <div className="row">
                 <button className="btn small" onClick={() => useMyLocation('pickup')}><IconPin /> موقعي الحالي</button>
                 <button className={pickMode === 'pickup' ? 'btn small active' : 'btn small'} onClick={() => setPickMode('pickup')}>حدّد على الخريطة</button>
@@ -1512,7 +1582,18 @@ export default function App() {
             </div>
             <div>
               <label>الوجهة</label>
-              <input placeholder="رايح فين؟" value={destLabel} onChange={(e) => setDestLabel(e.target.value)} />
+              <div className="suggest-wrap">
+                <input placeholder="رايح فين؟" value={destLabel} onChange={(e) => setDestLabel(e.target.value)} onBlur={() => setDestSugg([])} />
+                {destSugg.length > 0 && (
+                  <div className="suggest-list">
+                    {destSugg.map((s) => (
+                      <button key={`${s.lat},${s.lng}`} type="button" className="suggest-item" onMouseDown={(e) => { e.preventDefault(); pickSuggestion('destination', s) }}>
+                        <IconPin /> {s.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
               <div className="row">
                 <button className="btn small" onClick={() => useMyLocation('destination')}><IconPin /> موقعي الحالي</button>
                 <button className={pickMode === 'destination' ? 'btn small active' : 'btn small'} onClick={() => setPickMode('destination')}>حدّد على الخريطة</button>
