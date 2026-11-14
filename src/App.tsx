@@ -1096,7 +1096,10 @@ export default function App() {
               <span className="route-ic gray"><IconPin /></span>
               <div>
                 <div className="route-label">نقطة الركوب</div>
-                <div className="route-value"><span className="lock-note">🔒 هتظهر بعد قبول الطلب</span></div>
+                <div className="route-value">{r.pickup.label}</div>
+                {state.driver.currentLat && state.driver.currentLng && (
+                  <div className="muted">على بعد {distanceKm({ lat: state.driver.currentLat, lng: state.driver.currentLng }, r.pickup)} كم منك</div>
+                )}
               </div>
             </div>
             <div className="route-row">
@@ -1589,7 +1592,7 @@ export default function App() {
           </div>
         )}
         <footer className="footer">
-          <p className="muted">ind toktok — الإصدار 28</p>
+          <p className="muted">ind toktok — الإصدار 29</p>
         </footer>
       </div>
     )
@@ -1633,7 +1636,7 @@ export default function App() {
             <button className="link-btn" onClick={() => chooseRole('passenger')}>تبديل — أنا راكب</button>
           </div>
         )}
-        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 28</p>
+        <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار 29</p>
       </footer>
     </div>
   )
