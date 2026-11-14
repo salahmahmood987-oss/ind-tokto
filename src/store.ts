@@ -4,6 +4,7 @@ import type {
   PassengerProfile,
   PaymentRequest,
   Ride,
+  WaitlistEntry,
 } from './types'
 import { COMMISSION_RATE } from './types'
 
@@ -16,6 +17,8 @@ export interface AppState {
   drivers: DriverProfile[]
   /** كل العملاء المسجلين (مزامنة حية من Firestore — للإدارة فقط) */
   passengers: PassengerProfile[]
+  /** قايمة انتظار التوسع — عملاء من برّه النطاق سابوا أرقامهم (للإدارة فقط) */
+  waitlist: WaitlistEntry[]
   admin: AdminSettings
   /** آخر رقم طلب مستخدم — الطلب الجاي #1001 ثم #1002... */
   lastOrderNum: number
@@ -68,6 +71,7 @@ export function defaultState(): AppState {
     payments: [],
     drivers: [],
     passengers: [],
+    waitlist: [],
     admin: { walletNumber: '', walletName: '' },
     lastOrderNum: 1000,
     lastDriverNum: 1001,

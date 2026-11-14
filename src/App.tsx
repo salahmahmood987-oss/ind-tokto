@@ -6,7 +6,8 @@ import type { MapMode } from './MapView'
 import { IconCheck, IconDriver, IconHistory, IconList, IconPin, IconShield, IconUser, IconWallet } from './icons'
 import logoUrl from './assets/icon-1024.png'
 import { APP_VERSION, VERSION_URL } from './version'
-import { firebaseEnabled, loadDoc, subscribeDrivers, subscribePassengers, subscribePayments, subscribeRides, uploadImageAsDataUrl, saveDoc } from './firebaseDb'
+import { firebaseEnabled, loadDoc, subscribeDrivers, subscribePassengers, subscribePayments, subscribeRides, subscribeWaitlist, uploadImageAsDataUrl, saveDoc } from './firebaseDb'
+import { isInServiceArea, OUT_OF_AREA_MESSAGE, OUT_OF_AREA_TITLE } from './geo'
 import { sendOtpCode, verifyOtpCode } from './otp'
 import {
   clientCodeForPhone,
@@ -303,6 +304,8 @@ export default function App() {
   const [adminUserFilter, setAdminUserFilter] = useState<'all' | 'new' | 'old'>('all')
   const [adminUserSearch, setAdminUserSearch] = useState('')
   const [notice, setNotice] = useState('')
+  // طلب من برّه نطاق الخدمة (أسيوط/سوهاج) — المودال بتاع «لسه موصلناش هنا»
+  const [outOfArea, setOutOfArea] = useState<{ pickupLabel: string; destLabel: string } | null>(null)
   // تنبيه التحديث: لو فيه إصدار أحدث على الريبو بيظهر مودال بزر تحديث
   const [availableUpdate, setAvailableUpdate] = useState<{ version: number; apkUrl: string } | null>(null)
   const [requestBusy, setRequestBusy] = useState(false)
@@ -446,6 +449,13 @@ export default function App() {
     if (!firebaseEnabled) return
     return subscribePassengers((remote) => {
       setState((s) => ({ ...s, passengers: remote }))
+    })
+  }, [])
+  // مزامنة حية لقايمة انتظار التوسع — للإدارة بس
+  useEffect(() => {
+    if (!firebaseEnabled) return
+    return subscribeWaitlist((remote) => {
+      setState((s) => ({ ...s, waitlist: remote }))
     })
   }, [])
   // فحص التحديثات عند الفتح: لو فيه إصدار أحدث على الريبو يظهر تنبيه جوّه التطبيق
@@ -689,6 +699,22 @@ export default function App() {
     }
   }
 
+  /** عميل من برّه النطاق داس «بلّغني» — نسجل رقمه ومنطقته في قايمة الانتظار عند الأدمن */
+  function notifyMe() {
+    if (!state.passenger || !outOfArea) return
+    const entry = {
+      phone: state.passenger.phone,
+      name: state.passenger.name,
+      code: state.passenger.code,
+      pickupLabel: outOfArea.pickupLabel,
+      destLabel: outOfArea.destLabel,
+      createdAt: Date.now(),
+    }
+    void saveDoc('waitlist', `${state.passenger.phone}-${Date.now()}`, entry)
+    setOutOfArea(null)
+    showNotice('تمام! سجلنا رقمك وهنبلغك أول ما نفتح في منطقتك 👍')
+  }
+
   // ---- طلب رحلة ----
   async function requestRide() {
     if (!state.passenger) {
@@ -710,6 +736,12 @@ export default function App() {
       }
       if (!from || !to) {
         showNotice('حدد نقطة الركوب والوجهة الأول — اكتب اسم المكان أو حدّده على الخريطة.')
+        return
+      }
+      // النطاق: أسيوط وسوهاج بس — نقطة الركوب والوجهة لازم الاتنين جوّه النطاق
+      const [fromOk, toOk] = await Promise.all([isInServiceArea(from.lat, from.lng), isInServiceArea(to.lat, to.lng)])
+      if (!fromOk || !toOk) {
+        setOutOfArea({ pickupLabel: from.label, destLabel: to.label })
         return
       }
       const orderNum = state.lastOrderNum + 1
@@ -1679,6 +1711,16 @@ export default function App() {
           <br />★ {p.ratingAvg} ({p.ratingCount} تقييم) — سجّل: {p.createdAt ? fmtTime(p.createdAt) : 'قبل v30 — التاريخ مش معروف'}
         </div>
       ))}
+      <h3>قايمة انتظار التوسع 🔔</h3>
+      <p className="muted">عملاء من برّه أسيوط وسوهاج سابوا أرقامهم عشان نبلغهم لما نفتح عندهم: {state.waitlist.length}</p>
+      {state.waitlist.length === 0 && <p>مفيش حد مستني التوسع لسه.</p>}
+      {[...state.waitlist].sort((a, b) => b.createdAt - a.createdAt).map((w) => (
+        <div key={w.id} className="ride">
+          {w.name} ({w.code}) — <a className="link" href={`tel:${w.phone}`}>📞 {w.phone}</a>
+          <br />من: {w.pickupLabel} → إلى: {w.destLabel}
+          <br />سجّل: {w.createdAt ? fmtTime(w.createdAt) : '—'}
+        </div>
+      ))}
       <h3>كل الرحلات</h3>
       <input placeholder="🔍 ابحث برقم الطلب أو الكود أو الاسم أو الرقم…" value={search} onChange={(e) => setSearch(e.target.value)} />
       {filteredRides.map((r) => (
@@ -1744,6 +1786,21 @@ export default function App() {
       </div>
     </div>
   ) : null
+  // مودال برّه النطاق — رسالة أحسن من الرفض العادي: توضيح النطاق + زر «بلّغني»
+  const outOfAreaModal = outOfArea ? (
+    <div className="notice-overlay" onClick={() => setOutOfArea(null)}>
+      <div className="notice-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="notice-icon">!</div>
+        <p><b>{OUT_OF_AREA_TITLE}</b></p>
+        <p>{OUT_OF_AREA_MESSAGE}</p>
+        <p className="muted">من: {outOfArea.pickupLabel} — إلى: {outOfArea.destLabel}</p>
+        <div className="row">
+          <button className="btn" onClick={notifyMe}>🔔 بلّغني لما توصلوا</button>
+          <button className="btn small" onClick={() => setOutOfArea(null)}>تمام</button>
+        </div>
+      </div>
+    </div>
+  ) : null
   if (!isVerified) {
     return (
       <div className="app" dir="rtl">
@@ -1796,6 +1853,7 @@ export default function App() {
       )}
       {noticeModal}
       {updateModal}
+      {outOfAreaModal}
       {role === 'passenger' && passengerView}
       {role === 'myRequests' && passengerTripsView}
       {role === 'driver' && driverView}

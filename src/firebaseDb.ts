@@ -30,7 +30,7 @@ import type { Firestore } from 'firebase/firestore'
 import { isFirebaseConfigured } from './firebaseConfig'
 import { getFirebaseApp } from './firebaseApp'
 import { preparePhotoForFirestore } from './imageUpload'
-import type { DriverProfile, PassengerProfile, PaymentRequest, Ride } from './types'
+import type { DriverProfile, PassengerProfile, PaymentRequest, Ride, WaitlistEntry } from './types'
 
 export const firebaseEnabled = isFirebaseConfigured
 
@@ -262,6 +262,37 @@ export function subscribePassengers(cb: (passengers: PassengerProfile[]) => void
     return () => unsub()
   } catch (e) {
     reportError('مزامنة العملاء', e)
+    return () => {}
+  }
+}
+
+/**
+ * اشتراك حي في قايمة انتظار التوسع — للإدارة بس: أي عميل من برّه النطاق
+ * ساب رقمه يظهر فوراً عند الأدمن.
+ */
+export function subscribeWaitlist(cb: (entries: WaitlistEntry[]) => void): () => void {
+  try {
+    const db = getDb()
+    if (!db) return () => {}
+    const unsub = onSnapshot(
+      collection(db, 'waitlist'),
+      (snap) => cb(snap.docs.map((d) => {
+        const data = d.data() as Record<string, unknown>
+        return {
+          id: d.id,
+          phone: String(data.phone ?? ''),
+          name: String(data.name ?? ''),
+          code: String(data.code ?? ''),
+          pickupLabel: String(data.pickupLabel ?? ''),
+          destLabel: String(data.destLabel ?? ''),
+          createdAt: (data.createdAt as number) ?? 0,
+        } as WaitlistEntry
+      })),
+      (err) => reportError('مزامنة قايمة الانتظار', err),
+    )
+    return () => unsub()
+  } catch (e) {
+    reportError('مزامنة قايمة الانتظار', e)
     return () => {}
   }
 }

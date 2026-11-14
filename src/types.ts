@@ -115,6 +115,17 @@ export interface Ride {
   driverRatingForPassenger: number | null
 }
 
+/** عميل من برّه النطاق (أسيوط/سوهاج) ساب رقمه عشان نبلغه لما نفتح عنده */
+export interface WaitlistEntry {
+  id: string
+  phone: string
+  name: string
+  code: string
+  pickupLabel: string
+  destLabel: string
+  createdAt: number
+}
+
 export interface PaymentRequest {
   id: string
   driverCode: string
