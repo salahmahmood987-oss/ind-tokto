@@ -3,6 +3,8 @@ import { Geolocation } from '@capacitor/geolocation'
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera'
 import { Directory, Filesystem } from '@capacitor/filesystem'
 import { FileOpener } from '@capacitor-community/file-opener'
+import { Device } from '@capacitor/device'
+import { Browser } from '@capacitor/browser'
 import MapView from './MapView'
 import type { MapMode } from './MapView'
 import { IconCheck, IconDriver, IconHistory, IconList, IconPin, IconShield, IconUser, IconWallet } from './icons'
@@ -1863,6 +1865,17 @@ export default function App() {
     setUpdateProgress(0)
     setUpdateError('')
     try {
+      // البطارية الفاضية بتخلي التثبيت يزحف ويعلّق (v34 علّق على 1%) — نوقف قبل ما نبدأ
+      try {
+        const info = await Device.getBatteryInfo()
+        const level = Math.round((info.batteryLevel ?? 1) * 100)
+        if (!info.isCharging && (info.batteryLevel ?? 1) < 0.2) {
+          setUpdateError(`البطارية ${level}% ومش على الشاحن — حط التليفون على الشاحن لحد 20% الأول، التثبيت على بطارية فاضية بيعلّق.`)
+          return
+        }
+      } catch { /* لو معرفناش نقرا البطارية نكمّل عادي */ }
+      // امسح أي نسخة قديمة متعلّقة قبل التحميل
+      try { await Filesystem.deleteFile({ path: 'ind-toktok-update.apk', directory: Directory.Cache }) } catch { /* مفيش ملف قديم */ }
       const listener = await Filesystem.addListener('progress', (p) => {
         if (p.contentLength > 0) setUpdateProgress(Math.round((p.bytes / p.contentLength) * 100))
       })
@@ -1906,6 +1919,7 @@ export default function App() {
           <button className="btn" disabled={updateBusy} onClick={() => installUpdate(availableUpdate.apkUrl)}>{updateBusy ? (updateProgress > 0 ? `بيحمّل التحديث… ${updateProgress}%` : 'بيحمّل التحديث…') : 'حدّث دلوقتي ⬇'}</button>
           <button className="btn small" onClick={dismissUpdate}>بعدين</button>
         </div>
+        <button className="btn small" disabled={updateBusy} onClick={() => void Browser.open({ url: availableUpdate.apkUrl })}>التثبيت بيعلّق؟ حمّل من المتصفح</button>
       </div>
     </div>
   ) : null
