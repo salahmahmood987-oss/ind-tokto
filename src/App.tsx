@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Geolocation } from '@capacitor/geolocation'
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera'
+import { Directory, Filesystem } from '@capacitor/filesystem'
+import { FileOpener } from '@capacitor-community/file-opener'
 import MapView from './MapView'
 import type { MapMode } from './MapView'
 import { IconCheck, IconDriver, IconHistory, IconList, IconPin, IconShield, IconUser, IconWallet } from './icons'
@@ -308,6 +310,10 @@ export default function App() {
   const [outOfArea, setOutOfArea] = useState<{ pickupLabel: string; destLabel: string } | null>(null)
   // تنبيه التحديث: لو فيه إصدار أحدث على الريبو بيظهر مودال بزر تحديث
   const [availableUpdate, setAvailableUpdate] = useState<{ version: number; apkUrl: string } | null>(null)
+  // تحميل التحديث جوّه التطبيق (من غير لينكات): شغال / نسبة التحميل / رسالة فشل
+  const [updateBusy, setUpdateBusy] = useState(false)
+  const [updateProgress, setUpdateProgress] = useState(0)
+  const [updateError, setUpdateError] = useState('')
   const [requestBusy, setRequestBusy] = useState(false)
   // تسجيل العميل + OTP
   const [regPhone, setRegPhone] = useState('')
@@ -1769,6 +1775,41 @@ export default function App() {
       </div>
     </div>
   ) : null
+  /** تحديث جوّه التطبيق من غير لينكات: يحمّل الـ APK ويفتح مثبّت أندرويد */
+  async function installUpdate(apkUrl: string) {
+    if (updateBusy) return
+    setUpdateBusy(true)
+    setUpdateProgress(0)
+    setUpdateError('')
+    try {
+      const listener = await Filesystem.addListener('progress', (p) => {
+        if (p.contentLength > 0) setUpdateProgress(Math.round((p.bytes / p.contentLength) * 100))
+      })
+      try {
+        const result = await Filesystem.downloadFile({
+          url: apkUrl,
+          path: 'ind-toktok-update.apk',
+          directory: Directory.Cache,
+          progress: true,
+        })
+        let filePath = result.path ?? ''
+        if (!filePath.startsWith('/')) {
+          const { uri } = await Filesystem.getUri({ path: 'ind-toktok-update.apk', directory: Directory.Cache })
+          filePath = uri.replace(/^file:\/\//, '')
+        }
+        await FileOpener.open({ filePath, contentType: 'application/vnd.android.package-archive' })
+        // مثبّت أندرويد اتفتح — التطبيق هيروح خلفية لحد ما التثبيت يخلص
+        setAvailableUpdate(null)
+      } finally {
+        await listener.remove()
+      }
+    } catch {
+      setUpdateError('تعذر تحميل التحديث — تأكد من النت وجرب «حدّث دلوقتي» تاني.')
+    } finally {
+      setUpdateBusy(false)
+      setUpdateProgress(0)
+    }
+  }
   // مودال التحديث — بيظهر لما يكون فيه إصدار أحدث (قابل للتجاهل، مش إجباري)
   const dismissUpdate = () => {
     if (availableUpdate) localStorage.setItem('indtoktok-update-dismissed', String(availableUpdate.version))
@@ -1779,8 +1820,9 @@ export default function App() {
       <div className="notice-modal" onClick={(e) => e.stopPropagation()}>
         <div className="notice-icon">⬆</div>
         <p>في إصدار جديد من ind toktok (v{availableUpdate.version}) — حدّث التطبيق عشان تشوف آخر المميزات والتحسينات.</p>
+        {updateError && <p className="muted">{updateError}</p>}
         <div className="row">
-          <a className="btn" href={availableUpdate.apkUrl} target="_blank" rel="noreferrer">حدّث دلوقتي ⬇</a>
+          <button className="btn" disabled={updateBusy} onClick={() => installUpdate(availableUpdate.apkUrl)}>{updateBusy ? (updateProgress > 0 ? `بيحمّل التحديث… ${updateProgress}%` : 'بيحمّل التحديث…') : 'حدّث دلوقتي ⬇'}</button>
           <button className="btn small" onClick={dismissUpdate}>بعدين</button>
         </div>
       </div>
