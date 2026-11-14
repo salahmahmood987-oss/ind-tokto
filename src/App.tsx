@@ -3,7 +3,6 @@ import { Geolocation } from '@capacitor/geolocation'
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera'
 import { Directory, Filesystem } from '@capacitor/filesystem'
 import { FileOpener } from '@capacitor-community/file-opener'
-import { Browser } from '@capacitor/browser'
 import MapView from './MapView'
 import type { MapMode } from './MapView'
 import { IconCheck, IconDriver, IconHistory, IconList, IconPin, IconShield, IconUser, IconWallet } from './icons'
@@ -1916,7 +1915,6 @@ export default function App() {
           <button className="btn" disabled={updateBusy} onClick={() => installUpdate(availableUpdate.apkUrl)}>{updateBusy ? (updateProgress > 0 ? `بيحمّل التحديث… ${updateProgress}%` : 'بيحمّل التحديث…') : 'حدّث دلوقتي ⬇'}</button>
           <button className="btn small" onClick={dismissUpdate}>بعدين</button>
         </div>
-        <button className="btn small" disabled={updateBusy} onClick={() => void Browser.open({ url: availableUpdate.apkUrl })}>التثبيت بيعلّق؟ حمّل من المتصفح</button>
       </div>
     </div>
   ) : null
