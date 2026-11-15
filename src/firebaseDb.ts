@@ -24,13 +24,16 @@
 //    rides/{orderNo}      — ride + offers[] + driver location
 //    payments/{id}        — driver payment requests + screenshotUrl (Base64 مضغوطة)
 //    settings/admin       — admin walletNumber + walletName
+//    settings/launch      — (v44) launched + driversTarget: مفتاح تشغيل الخدمة للركاب
+//    launchWaitlist/{id}  — (v44) phone + name + createdAt: عملاء مستنيين الإطلاق
+//    waitlist/{id}        — عملاء برّه النطاق سابوا أرقامهم للتوسع
 // ---------------------------------------------------------------------------
 import { collection, doc, getDoc, getFirestore, onSnapshot, setDoc } from 'firebase/firestore'
 import type { Firestore } from 'firebase/firestore'
 import { isFirebaseConfigured } from './firebaseConfig'
 import { getFirebaseApp } from './firebaseApp'
 import { preparePhotoForFirestore } from './imageUpload'
-import type { DriverProfile, PassengerProfile, PaymentRequest, Ride, WaitlistEntry } from './types'
+import type { DriverProfile, LaunchWaitlistEntry, PassengerProfile, PaymentRequest, Ride, WaitlistEntry } from './types'
 
 export const firebaseEnabled = isFirebaseConfigured
 
@@ -262,6 +265,47 @@ export function subscribePassengers(cb: (passengers: PassengerProfile[]) => void
     return () => unsub()
   } catch (e) {
     reportError('مزامنة العملاء', e)
+    return () => {}
+  }
+}
+
+/**
+ * يقرأ إعدادات الإطلاق (settings/launch) — مستند مش موجود = لسه ما
+ * اشتغلناش (launched=false) وهدف السواقين 100. القواعد مفتوحة
+ * (allow read, write: if true) فأي عميل موثّق يقدر يقراه.
+ */
+export async function loadLaunch(): Promise<{ launched: boolean; driversTarget: number }> {
+  const docData = await loadDoc('settings', 'launch')
+  return {
+    launched: docData?.launched === true,
+    driversTarget: typeof docData?.driversTarget === 'number' ? docData.driversTarget : 100,
+  }
+}
+
+/**
+ * اشتراك حي في قايمة انتظار الإطلاق — للإدارة بس: أي عميل ساب رقمه
+ * عشان نبلغه لما الخدمة تشتغل يظهر فوراً عند الأدمن.
+ */
+export function subscribeLaunchWaitlist(cb: (entries: LaunchWaitlistEntry[]) => void): () => void {
+  try {
+    const db = getDb()
+    if (!db) return () => {}
+    const unsub = onSnapshot(
+      collection(db, 'launchWaitlist'),
+      (snap) => cb(snap.docs.map((d) => {
+        const data = d.data() as Record<string, unknown>
+        return {
+          id: d.id,
+          phone: String(data.phone ?? ''),
+          name: String(data.name ?? ''),
+          createdAt: (data.createdAt as number) ?? 0,
+        } as LaunchWaitlistEntry
+      })),
+      (err) => reportError('مزامنة قايمة انتظار الإطلاق', err),
+    )
+    return () => unsub()
+  } catch (e) {
+    reportError('مزامنة قايمة انتظار الإطلاق', e)
     return () => {}
   }
 }

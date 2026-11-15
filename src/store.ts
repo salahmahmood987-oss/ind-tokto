@@ -1,6 +1,7 @@
 import type {
   AdminSettings,
   DriverProfile,
+  LaunchWaitlistEntry,
   PassengerProfile,
   PaymentRequest,
   Ride,
@@ -19,6 +20,8 @@ export interface AppState {
   passengers: PassengerProfile[]
   /** قايمة انتظار التوسع — عملاء من برّه النطاق سابوا أرقامهم (للإدارة فقط) */
   waitlist: WaitlistEntry[]
+  /** قايمة انتظار الإطلاق (v44) — عملاء سابوا أرقامهم عشان نبلغهم لما الخدمة تشتغل (للإدارة فقط) */
+  launchWaitlist: LaunchWaitlistEntry[]
   admin: AdminSettings
   /** آخر رقم طلب مستخدم — الطلب الجاي #1001 ثم #1002... */
   lastOrderNum: number
@@ -72,6 +75,7 @@ export function defaultState(): AppState {
     drivers: [],
     passengers: [],
     waitlist: [],
+    launchWaitlist: [],
     admin: { walletNumber: '', walletName: '' },
     lastOrderNum: 1000,
     lastDriverNum: 1001,

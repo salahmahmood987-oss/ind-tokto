@@ -126,6 +126,22 @@ export interface WaitlistEntry {
   createdAt: number
 }
 
+/** إعدادات الإطلاق (v44) — مستند settings/launch في Firestore */
+export interface LaunchSettings {
+  /** الخدمة شغالة للركاب؟ false = لسه بنجمع سواقين */
+  launched: boolean
+  /** عدد السواقين المستهدف قبل الإطلاق (100 افتراضياً) */
+  driversTarget: number
+}
+
+/** عميل ساب رقمه عشان نبلغه أول ما الخدمة تشتغل (v44) */
+export interface LaunchWaitlistEntry {
+  id: string
+  phone: string
+  name: string
+  createdAt: number
+}
+
 export interface PaymentRequest {
   id: string
   driverCode: string

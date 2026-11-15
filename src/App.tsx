@@ -8,7 +8,7 @@ import type { MapMode } from './MapView'
 import { IconCheck, IconDriver, IconHistory, IconList, IconPin, IconShield, IconUser, IconWallet } from './icons'
 import logoUrl from './assets/icon-1024.png'
 import { APP_VERSION, VERSION_URL } from './version'
-import { firebaseEnabled, loadDoc, subscribeDrivers, subscribePassengers, subscribePayments, subscribeRides, subscribeWaitlist, uploadImageAsDataUrl, saveDoc } from './firebaseDb'
+import { firebaseEnabled, loadDoc, loadLaunch, subscribeDrivers, subscribeLaunchWaitlist, subscribePassengers, subscribePayments, subscribeRides, subscribeWaitlist, uploadImageAsDataUrl, saveDoc } from './firebaseDb'
 import { isInServiceArea, isInServiceBBox, OUT_OF_AREA_MESSAGE, OUT_OF_AREA_TITLE } from './geo'
 import { sendOtpCode, verifyOtpCode } from './otp'
 import {
@@ -26,7 +26,7 @@ import {
   MAX_DEBT_EGP,
   OTP_MAX_PER_HOUR,
 } from './types'
-import type { LatLng, Offer, PaymentRequest, Ride, Role } from './types'
+import type { LatLng, LaunchSettings, Offer, PaymentRequest, Ride, Role } from './types'
 
 function stars(value: number, onRate?: (n: number) => void) {
   return (
@@ -330,6 +330,10 @@ export default function App() {
   const [notice, setNotice] = useState('')
   // طلب من برّه نطاق الخدمة (أسيوط/سوهاج) — المودال بتاع «لسه موصلناش هنا»
   const [outOfArea, setOutOfArea] = useState<{ pickupLabel: string; destLabel: string } | null>(null)
+  // بوابة الإطلاق (v44): الخدمة لسه ما اشتغلتش — بنجمع 100 كابتن الأول
+  const [launch, setLaunch] = useState<LaunchSettings>({ launched: false, driversTarget: 100 })
+  const [launchGate, setLaunchGate] = useState(false)
+  const [launchBusy, setLaunchBusy] = useState(false)
   // تنبيه التحديث: لو فيه إصدار أحدث على الريبو بيظهر مودال بزر تحديث
   const [availableUpdate, setAvailableUpdate] = useState<{ version: number; apkUrl: string } | null>(null)
   // تحميل التحديث جوّه التطبيق (من غير لينكات): شغال / نسبة التحميل / رسالة فشل
@@ -484,6 +488,14 @@ export default function App() {
     if (!firebaseEnabled) return
     return subscribeWaitlist((remote) => {
       setState((s) => ({ ...s, waitlist: remote }))
+    })
+  }, [])
+  // قراءة إعدادات الإطلاق عند الفتح + مزامنة حية لقايمة انتظار الإطلاق (للإدارة)
+  useEffect(() => {
+    if (!firebaseEnabled) return
+    void loadLaunch().then(setLaunch)
+    return subscribeLaunchWaitlist((remote) => {
+      setState((s) => ({ ...s, launchWaitlist: remote }))
     })
   }, [])
   // فحص التحديثات عند الفتح: لو فيه إصدار أحدث على الريبو يظهر تنبيه جوّه التطبيق
@@ -728,10 +740,31 @@ export default function App() {
     showNotice('تمام! سجلنا رقمك وهنبلغك أول ما نفتح في منطقتك 👍')
   }
 
+  /** عميل داس «بلّغني لما نبدأ» في مودال الإطلاق — نسجل رقمه في قايمة انتظار الإطلاق */
+  function notifyLaunch() {
+    if (!state.passenger) return
+    void saveDoc('launchWaitlist', `${state.passenger.phone}-${Date.now()}`, {
+      phone: state.passenger.phone,
+      name: state.passenger.name,
+      createdAt: Date.now(),
+    })
+    setLaunchGate(false)
+    showNotice('تمام، هنبعتلك أول ما نبدأ ✅')
+  }
+
   // ---- طلب رحلة ----
   async function requestRide() {
     if (!state.passenger) {
       showNotice('سجل برقم تليفونك الأول.')
+      return
+    }
+    // بوابة الإطلاق (v44): الخدمة لسه ما اشتغلتش — بنجمع سواقين الأول.
+    // بنقرا العلم من السيرفر في كل مرة قبل إنشاء الطلب، فلو الأدمن شغّل
+    // الخدمة الطلب يمشي فوراً من غير تحديث للتطبيق.
+    const freshLaunch = await loadLaunch()
+    setLaunch(freshLaunch)
+    if (!freshLaunch.launched) {
+      setLaunchGate(true)
       return
     }
     setRequestBusy(true)
@@ -1742,6 +1775,17 @@ export default function App() {
   }
   const idCardStatusLabel = (s: string) => (s === 'approved' ? 'معتمدة ✅' : s === 'rejected' ? 'مرفوضة ❌' : s === 'pending' ? 'مستنية المراجعة ⏳' : 'مفيش بطاقة')
 
+  /** الأدمن يقلب مفتاح الإطلاق (v44) — يشتغل فوراً من غير تحديث للتطبيق:
+   *  الركاب بيقروا العلم من السيرفر في كل مرة قبل إنشاء الطلب. */
+  async function toggleLaunch() {
+    const next = !launch.launched
+    setLaunchBusy(true)
+    await saveDoc('settings', 'launch', { launched: next, driversTarget: launch.driversTarget })
+    setLaunch({ launched: next, driversTarget: launch.driversTarget })
+    setLaunchBusy(false)
+    showNotice(next ? 'الخدمة اشتغلت للركاب ✅ — الطلبات مفتوحة دلوقتي.' : 'وقّفنا الطلبات مؤقتاً — الركاب هيشوفوا رسالة الانتظار.')
+  }
+
   const adminView = (
     <div className="card">
       <h2><span className="icon-chip"><IconShield /></span>الإدارة — صلاح</h2>
@@ -1750,6 +1794,26 @@ export default function App() {
         <input placeholder="رقم المحفظة" value={state.admin.walletNumber} onChange={(e) => update({ admin: { ...state.admin, walletNumber: e.target.value } })} />
         <input placeholder="الاسم على المحفظة" value={state.admin.walletName} onChange={(e) => update({ admin: { ...state.admin, walletName: e.target.value } })} />
       </div>
+      <h3>تشغيل الخدمة للركاب 🚀</h3>
+      <p className="muted">
+        {launch.launched
+          ? 'الخدمة شغالة — الركاب يقدروا يطلبوا دلوقتي ✅'
+          : `لسه ما اشتغلناش — بنجمع ${launch.driversTarget} كابتن الأول ⏳`}
+      </p>
+      <p className="muted">مستنيين الإطلاق: {state.launchWaitlist.length} عميل سابوا أرقامهم عشان نبلغهم لما نبدأ.</p>
+      <button className="btn" disabled={launchBusy} onClick={() => void toggleLaunch()}>
+        {launch.launched ? 'وقّف الطلبات مؤقتاً ⏸️' : 'شغّل الخدمة للركاب 🚀'}
+      </button>
+      {state.launchWaitlist.length > 0 && (
+        <div>
+          {[...state.launchWaitlist].sort((a, b) => b.createdAt - a.createdAt).map((w) => (
+            <div key={w.id} className="ride">
+              {w.name} — <a className="link" href={`tel:${w.phone}`}>📞 {w.phone}</a>
+              <br />سجّل: {w.createdAt ? fmtTime(w.createdAt) : '—'}
+            </div>
+          ))}
+        </div>
+      )}
       <h3>طلبات التحويل الواردة</h3>
       {state.payments.length === 0 && <p>مفيش طلبات تحويل دلوقتي.</p>}
       {state.payments.map((p) => (
@@ -1933,6 +1997,20 @@ export default function App() {
       </div>
     </div>
   ) : null
+  // مودال بوابة الإطلاق (v44) — الخدمة لسه ما اشتغلتش: رسالة ودودة + زر «بلّغني»
+  const launchGateModal = launchGate ? (
+    <div className="notice-overlay" onClick={() => setLaunchGate(false)}>
+      <div className="notice-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="notice-icon">⏳</div>
+        <p><b>لسه ما اشتغلناش ⏳</b></p>
+        <p>بنجمع {launch.driversTarget} كابتن الأول وبعدها هنبدأ الشغل في أسيوط وسوهاج — سجّل رقمك وهنبعتلك أول ما نبدأ.</p>
+        <div className="row">
+          <button className="btn" onClick={notifyLaunch}>🔔 بلّغني لما نبدأ</button>
+          <button className="btn small" onClick={() => setLaunchGate(false)}>تمام</button>
+        </div>
+      </div>
+    </div>
+  ) : null
   if (!isVerified) {
     return (
       <div className="app" dir="rtl">
@@ -1986,6 +2064,7 @@ export default function App() {
       {noticeModal}
       {updateModal}
       {outOfAreaModal}
+      {launchGateModal}
       {role === 'passenger' && passengerView}
       {role === 'myRequests' && passengerTripsView}
       {role === 'driver' && driverView}
