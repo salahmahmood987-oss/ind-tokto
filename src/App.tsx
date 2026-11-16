@@ -5,7 +5,7 @@ import { Directory, Filesystem } from '@capacitor/filesystem'
 import { FileOpener } from '@capacitor-community/file-opener'
 import MapView from './MapView'
 import type { MapMode } from './MapView'
-import { IconCheck, IconDriver, IconHistory, IconList, IconPin, IconShield, IconUser, IconWallet } from './icons'
+import { IconBack, IconBell, IconCheck, IconDriver, IconEdit, IconHistory, IconList, IconNav, IconPhone, IconPin, IconSettings, IconShield, IconSwap, IconTrash, IconUser, IconWallet } from './icons'
 import logoUrl from './assets/icon-1024.png'
 import { APP_VERSION, VERSION_URL } from './version'
 import { firebaseEnabled, loadDoc, loadLaunch, subscribeDrivers, subscribeLaunchWaitlist, subscribePassengers, subscribePayments, subscribeRides, subscribeWaitlist, uploadImageAsDataUrl, saveDoc } from './firebaseDb'
@@ -58,6 +58,14 @@ const CANCEL_REASONS = [
   'عطل في التوكتوك',
   'سبب آخر…',
 ]
+/** أسباب إلغاء العميل للرحلة — نفس نمط السواق (v45): اختيار + خانة "سبب آخر". */
+const PASSENGER_CANCEL_REASONS = [
+  'غيّرت رأيي',
+  'لقيت توكتوك تاني',
+  'الكابتن اتأخر عليّا',
+  'السعر مش مناسب',
+  'سبب آخر…',
+]
 /** المسافة بالكيلومتر بين نقطتين (صيغة هافرساين) — رقم واحد بعد العلامة. */
 function distanceKm(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
   const R = 6371
@@ -86,12 +94,15 @@ function avatar(url: string | null | undefined, name: string) {
 // خط زمني للرحلة: وقت الطلب والقبول والوصول والنهاية
 function rideTimes(r: Ride) {
   return (
-    <div className="ride-times">
-      <span>وقت الطلب: {fmtTime(r.createdAt)}</span>
-      <span>وقت القبول: {fmtTime(r.acceptedAt)}</span>
-      <span>وصول الكابتن: {fmtTime(r.arrivedAt)}</span>
-      <span>نهاية الرحلة: {fmtTime(r.completedAt)}</span>
-    </div>
+    <>
+      <div className="ride-times-head"><span className="icon-chip sm"><IconHistory /></span>أوقات الرحلة</div>
+      <div className="ride-times">
+        <span>وقت الطلب: {fmtTime(r.createdAt)}</span>
+        <span>وقت القبول: {fmtTime(r.acceptedAt)}</span>
+        <span>وصول الكابتن: {fmtTime(r.arrivedAt)}</span>
+        <span>نهاية الرحلة: {fmtTime(r.completedAt)}</span>
+      </div>
+    </>
   )
 }
 
@@ -158,12 +169,28 @@ async function resolvePlace(label: string): Promise<LatLng | null> {
   return g ? { lat: g.lat, lng: g.lng, label: clean } : null
 }
 
+// إزالة تكرار نفس الرحلة (نفس رقم الطلب) من أي قايمة — بيحصل لو نسخة
+// محلية اتخزنت مرتين على الجهاز (الرحلة #1009 ظهرت مرتين في "رحلات
+// سابقة" مع إن السيرفر فيه مستند واحد بس). من غير مسح أي بيانات.
+function dedupeRides(list: Ride[]): Ride[] {
+  const seen = new Set<string>()
+  const out: Ride[] = []
+  for (const r of list) {
+    if (seen.has(r.orderNo)) continue
+    seen.add(r.orderNo)
+    out.push(r)
+  }
+  return out
+}
+
 // دمج رحلات Firestore مع الرحلات المحلية: الجديدة تتضاف، والتغييرات (حالة/عروض/أوقات) تتحدث
 function mergeRides(local: Ride[], remote: Ride[]): Ride[] {
-  if (!remote.length) return local
-  const byNo = new Map(local.map((r) => [r.orderNo, r]))
-  let changed = false
-  const out = [...local]
+  // أي تكرار محلي قديم بيتشال هنا برضه — عشان ميفضلش ظاهر في القوايم
+  const deduped = dedupeRides(local)
+  if (!remote.length) return deduped.length === local.length ? local : deduped
+  const byNo = new Map(deduped.map((r) => [r.orderNo, r]))
+  let changed = deduped.length !== local.length
+  const out = [...deduped]
   for (const rr of remote) {
     const ex = byNo.get(rr.orderNo)
     if (!ex) {
@@ -379,12 +406,12 @@ export default function App() {
   const myCurrentRide = state.rides.find((r) => r.driverCode === state.driver.code && ['matched', 'driver_arrived', 'on_trip'].includes(r.status))
   // السواق وصل للعميل؟ لوكيشن الوجهة يظهر له بس بعد الوصول (driver_arrived أو on_trip)
   const driverArrived = !!myCurrentRide && ['driver_arrived', 'on_trip'].includes(myCurrentRide.status)
-  const myPastRides = state.rides
-    .filter((r) => r.driverCode === state.driver.code && (r.status === 'completed' || r.status === 'cancelled'))
+  const myPastRides = dedupeRides(state.rides
+    .filter((r) => r.driverCode === state.driver.code && (r.status === 'completed' || r.status === 'cancelled')))
     .sort((a, b) => b.createdAt - a.createdAt)
   // طلبات العميل (كل حالاتها) — الأحدث أولاً
-  const myPassengerRides = state.rides
-    .filter((r) => state.passenger && r.passengerCode === state.passenger.code)
+  const myPassengerRides = dedupeRides(state.rides
+    .filter((r) => state.passenger && r.passengerCode === state.passenger.code))
     .sort((a, b) => b.createdAt - a.createdAt)
 
   // ---- طلب إذن الموقع فور فتح التطبيق ----
@@ -1184,7 +1211,7 @@ export default function App() {
     setProfilePhotoFile(null)
   }
 
-  const filteredRides = state.rides.filter((r) => {
+  const filteredRides = dedupeRides(state.rides).filter((r) => {
     const q = search.trim()
     if (!q) return true
     return [r.orderNo, r.passengerCode, r.driverCode || '', r.passengerName, r.passengerPhone]
@@ -1238,7 +1265,7 @@ export default function App() {
           {state.driver.online ? '🟢 متاح لقبول الطلبات' : '⚪ مش متاح للعمل — دوس عشان تستقبل طلبات'}
         </span>
       </button>
-      <button className="link-btn" onClick={ring}>جرّب صوت التنبيه</button>
+      <button className="btn small" onClick={ring}><IconBell /> جرّب صوت التنبيه</button>
       {state.driver.online && (state.driver.currentLat == null || state.driver.currentLng == null) && (
         <p className="warn">⚠️ موقعك مش واصل — شغّل الـ GPS عشان المسافات والطلبات تظهر صح.</p>
       )}
@@ -1318,7 +1345,7 @@ export default function App() {
   const driverTripsView = (
     <div className="card">
       <h2><span className="icon-chip"><IconHistory /></span>رحلاتي</h2>
-      <h3>رحلتي الحالية</h3>
+      <h3><span className="icon-chip sm"><IconPin /></span>رحلتي الحالية</h3>
       {myCurrentRide ? (
         <div className="request-card">
           <div className="map-hero-card">
@@ -1357,18 +1384,18 @@ export default function App() {
               </div>
             </div>
           <div className="request-actions">
-            <a className="link" target="_blank" rel="noreferrer" href={`https://www.google.com/maps/dir/?api=1&destination=${myCurrentRide.pickup.lat},${myCurrentRide.pickup.lng}`}>الاتجاهات لنقطة الركوب ↗</a>
+            <a className="btn small" target="_blank" rel="noreferrer" href={`https://www.google.com/maps/dir/?api=1&destination=${myCurrentRide.pickup.lat},${myCurrentRide.pickup.lng}`}><IconNav /> الاتجاهات لنقطة الركوب ↗</a>
             {driverArrived && (
               <>
                 <br />
-                <a className="link" target="_blank" rel="noreferrer" href={`https://www.google.com/maps/dir/?api=1&destination=${myCurrentRide.destination.lat},${myCurrentRide.destination.lng}`}>📍 الاتجاهات للوجهة ↗</a>
+                <a className="btn small" target="_blank" rel="noreferrer" href={`https://www.google.com/maps/dir/?api=1&destination=${myCurrentRide.destination.lat},${myCurrentRide.destination.lng}`}><IconNav /> الاتجاهات للوجهة ↗</a>
                 <p className="notice">وصلت للعميل — لوكيشن الوجهة ظهر دلوقتي على الخريطة.</p>
               </>
             )}
             {myCurrentRide.driverLat && myCurrentRide.driverLng && (
               <p className="muted">العميل على بعد {distanceKm({ lat: myCurrentRide.driverLat, lng: myCurrentRide.driverLng }, myCurrentRide.pickup)} كم منك</p>
             )}
-            <a className="btn" href={`tel:${myCurrentRide.passengerPhone}`}>📞 اتصل بالعميل — {myCurrentRide.passengerPhone}</a>
+            <a className="btn" href={`tel:${myCurrentRide.passengerPhone}`}><IconPhone /> اتصل بالعميل — {myCurrentRide.passengerPhone}</a>
             {rideTimes(myCurrentRide)}
           </div>
           <div className="row">
@@ -1390,7 +1417,7 @@ export default function App() {
               )}
               <div className="row">
                 <button className="btn danger" disabled={!cancelReason || (cancelReason === 'سبب آخر…' && !cancelReasonOther.trim())} onClick={() => cancelRide(myCurrentRide.orderNo, cancelReason === 'سبب آخر…' ? cancelReasonOther.trim() : cancelReason, 'driver')}>تأكيد الإلغاء</button>
-                <button className="link-btn" onClick={() => { setCancelTarget(null); setCancelReason(''); setCancelReasonOther('') }}>رجوع</button>
+                <button className="btn small soft" onClick={() => { setCancelTarget(null); setCancelReason(''); setCancelReasonOther('') }}><IconBack /> رجوع</button>
               </div>
             </div>
           )}
@@ -1399,7 +1426,7 @@ export default function App() {
       ) : (
         <p>مفيش رحلة شغالة دلوقتي.</p>
       )}
-      <h3>رحلات سابقة</h3>
+      <h3><span className="icon-chip sm"><IconHistory /></span>رحلات سابقة</h3>
       {myPastRides.length === 0 && <p>لسه مفيش رحلات مكتملة أو ملغاة.</p>}
       {myPastRides.map((r) => (
         <div key={r.orderNo} className="ride">
@@ -1427,14 +1454,14 @@ export default function App() {
             <input placeholder="الاسم" value={state.driver.name} onChange={(e) => update({ driver: { ...state.driver, name: e.target.value } })} />
             <input placeholder="رقم التليفون" value={state.driver.phone} readOnly={!!verifiedPhones.driver} onChange={(e) => update({ driver: { ...state.driver, phone: e.target.value } })} />
             {verifiedPhones.driver && (
-              <p className="muted">رقمك موثق ✓ — <button className="link-btn" onClick={clearDriverVerification}>تغيير الرقم</button></p>
+              <p className="muted">رقمك موثق ✓ — <button className="btn small soft" onClick={clearDriverVerification}><IconEdit /> تغيير الرقم</button></p>
             )}
             <input placeholder="رقم اللوحة" value={state.driver.plate} onChange={(e) => update({ driver: { ...state.driver, plate: e.target.value } })} />
             <input placeholder="اللون" value={state.driver.color} onChange={(e) => update({ driver: { ...state.driver, color: e.target.value } })} />
             <input placeholder="الموديل" value={state.driver.model} onChange={(e) => update({ driver: { ...state.driver, model: e.target.value } })} />
           </div>
           <p>كود السواق: <b>{state.driver.code}</b> — التقييم: {state.driver.ratingAvg} ★ ({state.driver.ratingCount})</p>
-          <h3>صورة البطاقة الشخصية</h3>
+          <h3><span className="icon-chip sm"><IconShield /></span>صورة البطاقة الشخصية</h3>
           <p>الصورة بتتضغط تلقائياً قبل الرفع (الحد حوالي 250 كيلوبايت) وتتحفظ في حسابك.</p>
           <PhotoPicker onPick={setIdCardFile} label="اختار صورة البطاقة" />
           <button className="btn" onClick={uploadIdCard} disabled={!idCardFile}>رفع صورة البطاقة</button>
@@ -1444,7 +1471,7 @@ export default function App() {
               <p>حالة البطاقة: {state.driver.idCardStatus === 'pending' ? 'بانتظار المراجعة' : state.driver.idCardStatus}</p>
             </div>
           )}
-          <h3>صورتي الشخصية (بتظهر للعميل)</h3>
+          <h3><span className="icon-chip sm"><IconUser /></span>صورتي الشخصية (بتظهر للعميل)</h3>
           {state.driver.photoUrl && <img src={state.driver.photoUrl} alt="صورتي الشخصية" className="avatar avatar-lg" />}
           <PhotoPicker onPick={setProfilePhotoFile} label="اختار صورتي" />
           <button className="btn" onClick={() => uploadProfilePhoto('driver')} disabled={!profilePhotoFile}>حفظ صورتي</button>
@@ -1454,7 +1481,7 @@ export default function App() {
         <div className="saved-bar">
           {avatar(state.driver.photoUrl, state.driver.name)} {state.driver.name} — {state.driver.phone} — كودك: <b>{state.driver.code}</b>
           {state.driver.idCardUrl && <span> — البطاقة: {state.driver.idCardStatus === 'pending' ? 'بانتظار المراجعة' : state.driver.idCardStatus}</span>}
-          <button className="link-btn" onClick={() => setDriverFormOpen(true)}>تعديل بياناتي</button>
+          <button className="btn small" onClick={() => setDriverFormOpen(true)}><IconEdit /> تعديل بياناتي</button>
         </div>
       )}
       <p className="muted">📍 موقعك بيشارك تلقائياً وانت متاح لقبول الطلبات — لازم عشان تشوف المسافة للعميل والعملاء يشوفوك على الخريطة، ومش هتقدر تبقى متاح والموقع مقفول.</p>
@@ -1556,7 +1583,7 @@ export default function App() {
                     <button className="btn" onClick={() => acceptOffer(activeRide, o)}>اختار الكابتن ده</button>
                   </div>
                 ))}
-                <button className="btn danger" onClick={() => cancelRide(activeRide.orderNo, 'العميل ألغى الطلب', 'passenger')}>إلغاء الطلب</button>
+                <button className="btn danger" onClick={() => setCancelTarget(activeRide.orderNo)}>إلغاء الرحلة</button>
               </>
             )}
             {(activeRide.status === 'matched' || activeRide.status === 'driver_arrived' || activeRide.status === 'on_trip') && (
@@ -1572,9 +1599,29 @@ export default function App() {
                   </div>
                 </div>
                 {activeRide.driverPhone && (
-                  <a className="btn" href={`tel:${activeRide.driverPhone}`}>📞 اتصل بالكابتن — {activeRide.driverPhone}</a>
+                  <a className="btn" href={`tel:${activeRide.driverPhone}`}><IconPhone /> اتصل بالكابتن — {activeRide.driverPhone}</a>
+                )}
+                {(activeRide.status === 'matched' || activeRide.status === 'driver_arrived') && (
+                  <button className="btn danger" onClick={() => setCancelTarget(activeRide.orderNo)}>إلغاء الرحلة</button>
                 )}
               </>
+            )}
+            {cancelTarget === activeRide.orderNo && ['searching', 'matched', 'driver_arrived'].includes(activeRide.status) && (
+              <div className="box">
+                <h3>سبب الإلغاء</h3>
+                {PASSENGER_CANCEL_REASONS.map((reason) => (
+                  <label key={reason} className="row">
+                    <input type="radio" name="cancel-reason-passenger" checked={cancelReason === reason} onChange={() => setCancelReason(reason)} /> {reason}
+                  </label>
+                ))}
+                {cancelReason === 'سبب آخر…' && (
+                  <input placeholder="اكتب السبب" value={cancelReasonOther} onChange={(e) => setCancelReasonOther(e.target.value)} />
+                )}
+                <div className="row">
+                  <button className="btn danger" disabled={!cancelReason || (cancelReason === 'سبب آخر…' && !cancelReasonOther.trim())} onClick={() => cancelRide(activeRide.orderNo, cancelReason === 'سبب آخر…' ? cancelReasonOther.trim() : cancelReason, 'passenger')}>تأكيد الإلغاء</button>
+                  <button className="btn small soft" onClick={() => { setCancelTarget(null); setCancelReason(''); setCancelReasonOther('') }}><IconBack /> رجوع</button>
+                </div>
+              </div>
             )}
             {activeRide.status === 'completed' && (
               <div>
@@ -1643,7 +1690,7 @@ export default function App() {
 
           <p className="muted">دوس على الخريطة لتحديد {pickMode === 'pickup' ? 'نقطة الركوب' : pickMode === 'destination' ? 'الوجهة' : '—'} — أو استخدم زرار «موقعي الحالي».</p>
 
-          <h3>سعر المشوار</h3>
+          <h3><span className="icon-chip sm"><IconWallet /></span>سعر المشوار</h3>
           <div className="fare-stepper">
             <button className="stepper-btn" onClick={() => setFareText(String(Math.max(FARE_MIN, fare - 5)))}>−</button>
             <input
@@ -1661,7 +1708,7 @@ export default function App() {
             <button className="stepper-btn" onClick={() => setFareText(String(Math.min(FARE_MAX, fare + 5)))}>+</button>
           </div>
           <p className="muted">من {FARE_MIN} لـ {FARE_MAX} جنيه — دوس على الرقم نفسه وعدّله.</p>
-          <button className="btn big" onClick={requestRide} disabled={requestBusy}>{requestBusy ? 'بيحدد الأماكن…' : `اطلب توكتوك — ${money(fare)}`}</button>
+          <button className="btn big" onClick={requestRide} disabled={requestBusy}>{requestBusy ? 'بيحدد الأماكن…' : <><IconPin /> اطلب توكتوك — {money(fare)}</>}</button>
           </div>
         </>
       )}
@@ -1678,7 +1725,7 @@ export default function App() {
         <>
           <div className="saved-bar">
             <IconUser /> {state.passenger.name} — {state.passenger.phone} — كودك: <b>{state.passenger.code}</b> <IconCheck /> موثق
-            <button className="link-btn" onClick={clearPassengerVerification}>تعديل الرقم</button>
+            <button className="btn small soft" onClick={clearPassengerVerification}><IconEdit /> تعديل الرقم</button>
           </div>
           <div className="profile-box">
             {avatar(state.passenger.photoUrl, state.passenger.name)}
@@ -1727,13 +1774,13 @@ export default function App() {
       <p>رصيدك في المحفظة: <b style={{ color: 'var(--green)' }}>{money(state.driver.balance ?? 0)}</b> — لو حوّلت أكتر من مديونيتك الزيادة بتتحفظ هنا، وعمولات الرحلات الجاية (5%) بتتخصم من الرصيد ده الأول قبل ما تتسجل مديونية.</p>
       <p>إجمالي ما سددته: {money(state.driver.totalPaid)} — العمولة 5% من كل رحلة مكتملة تتسجل مديونية تلقائياً.</p>
       {isDebtBlocked(state.driver.debt) && <p className="warn">⛔ وصلت للحد الأقصى — مش هتستقبل رحلات جديدة لحد ما تسدد.</p>}
-      <h3>حوّل للإدارة</h3>
+      <h3><span className="icon-chip sm"><IconSwap /></span>حوّل للإدارة</h3>
       <p>محفظة الإدارة: <b>{state.admin.walletNumber || '— لم يحددها الأدمن بعد —'}</b> ({state.admin.walletName || ''})</p>
       <input placeholder="المبلغ المحوّل (جنيه)" inputMode="numeric" value={payAmount} onChange={(e) => setPayAmount(e.target.value)} />
       <PhotoPicker onPick={setPayShot} label="اختار صورة التحويل" />
       <p>صورة التحويل بتتضغط تلقائياً قبل الإرسال (الحد حوالي 250 كيلوبايت).</p>
       <button className="btn" onClick={submitPayment}>ابعت طلب التحويل + صورة التحويل</button>
-      <h3>طلباتي</h3>
+      <h3><span className="icon-chip sm"><IconList /></span>طلباتي</h3>
       {state.payments.filter((p) => p.driverCode === state.driver.code).map((p) => (
         <div key={p.id} className="ride">{p.id} — {money(p.amount)} — {p.status === 'pending' ? 'بانتظار الإدارة' : p.status === 'approved' ? '✅ اتوافق عليه' : '❌ اترفض'}
           {p.screenshotUrl && <img src={p.screenshotUrl} alt="صورة التحويل" className="shot" />}
@@ -1789,12 +1836,12 @@ export default function App() {
   const adminView = (
     <div className="card">
       <h2><span className="icon-chip"><IconShield /></span>الإدارة — صلاح</h2>
-      <h3>رقم محفظتي</h3>
+      <h3><span className="icon-chip sm"><IconWallet /></span>رقم محفظتي</h3>
       <div className="grid">
         <input placeholder="رقم المحفظة" value={state.admin.walletNumber} onChange={(e) => update({ admin: { ...state.admin, walletNumber: e.target.value } })} />
         <input placeholder="الاسم على المحفظة" value={state.admin.walletName} onChange={(e) => update({ admin: { ...state.admin, walletName: e.target.value } })} />
       </div>
-      <h3>تشغيل الخدمة للركاب 🚀</h3>
+      <h3><span className="icon-chip sm"><IconSettings /></span>تشغيل الخدمة للركاب 🚀</h3>
       <p className="muted">
         {launch.launched
           ? 'الخدمة شغالة — الركاب يقدروا يطلبوا دلوقتي ✅'
@@ -1808,13 +1855,13 @@ export default function App() {
         <div>
           {[...state.launchWaitlist].sort((a, b) => b.createdAt - a.createdAt).map((w) => (
             <div key={w.id} className="ride">
-              {w.name} — <a className="link" href={`tel:${w.phone}`}>📞 {w.phone}</a>
+              {w.name} — <a className="phone-chip" href={`tel:${w.phone}`}><IconPhone /> {w.phone}</a>
               <br />سجّل: {w.createdAt ? fmtTime(w.createdAt) : '—'}
             </div>
           ))}
         </div>
       )}
-      <h3>طلبات التحويل الواردة</h3>
+      <h3><span className="icon-chip sm"><IconWallet /></span>طلبات التحويل الواردة</h3>
       {state.payments.length === 0 && <p>مفيش طلبات تحويل دلوقتي.</p>}
       {state.payments.map((p) => (
         <div key={p.id} className="ride">
@@ -1828,11 +1875,11 @@ export default function App() {
           )}
         </div>
       ))}
-      <h3>صور بطاقات السواقين للمراجعة</h3>
+      <h3><span className="icon-chip sm"><IconShield /></span>صور بطاقات السواقين للمراجعة</h3>
       {pendingIdCards.length === 0 && <p>مفيش بطاقات مستنية المراجعة.</p>}
       {pendingIdCards.map((d) => (
         <div key={d.code} className="ride">
-          {d.name} ({d.code}) — <a className="link" href={`tel:${d.phone}`}>📞 {d.phone}</a>
+          {d.name} ({d.code}) — <a className="phone-chip" href={`tel:${d.phone}`}><IconPhone /> {d.phone}</a>
           {d.idCardUrl && <img src={d.idCardUrl} alt="بطاقة السواق" className="shot" />}
           <div className="row">
             <button className="btn" onClick={() => reviewDriverIdCard(d.code, 'approved')}>اعتماد البطاقة</button>
@@ -1840,7 +1887,7 @@ export default function App() {
           </div>
         </div>
       ))}
-      <h3>المستخدمون</h3>
+      <h3><span className="icon-chip sm"><IconUser /></span>المستخدمون</h3>
       <p className="muted">🛺 السواقين: {state.drivers.length} • 👤 العملاء: {state.passengers.length} • 🆕 جدد آخر 7 أيام: {newDriversCount + newPassengersCount}</p>
       <div className="row">
         <button className={adminUserTab === 'drivers' ? 'btn' : 'btn small'} onClick={() => setAdminUserTab('drivers')}>🛺 السواقين ({state.drivers.length})</button>
@@ -1856,7 +1903,7 @@ export default function App() {
       {adminUserTab === 'passengers' && adminPassengerUsers.length === 0 && <p>مفيش عملاء هنا.</p>}
       {adminUserTab === 'drivers' && adminDriverUsers.map((d) => (
         <div key={d.code} className="ride">
-          {avatar(d.photoUrl, d.name)} <b>{d.name}</b> ({d.code}) — <a className="link" href={`tel:${d.phone}`}>📞 {d.phone}</a>
+          {avatar(d.photoUrl, d.name)} <b>{d.name}</b> ({d.code}) — <a className="phone-chip" href={`tel:${d.phone}`}><IconPhone /> {d.phone}</a>
           <br />★ {d.ratingAvg} ({d.ratingCount} تقييم) — {d.plate} {d.model} {d.color}
           <br />مديونية: {money(d.debt)} — رصيد: {money(d.balance)} — إجمالي المسدد: {money(d.totalPaid)}
           <br />البطاقة: {idCardStatusLabel(d.idCardStatus)} — سجّل: {d.createdAt ? fmtTime(d.createdAt) : 'قبل v30 — التاريخ مش معروف'}
@@ -1865,21 +1912,21 @@ export default function App() {
       ))}
       {adminUserTab === 'passengers' && adminPassengerUsers.map((p) => (
         <div key={p.code} className="ride">
-          {avatar(p.photoUrl, p.name)} <b>{p.name}</b> ({p.code}) — <a className="link" href={`tel:${p.phone}`}>📞 {p.phone}</a>
+          {avatar(p.photoUrl, p.name)} <b>{p.name}</b> ({p.code}) — <a className="phone-chip" href={`tel:${p.phone}`}><IconPhone /> {p.phone}</a>
           <br />★ {p.ratingAvg} ({p.ratingCount} تقييم) — سجّل: {p.createdAt ? fmtTime(p.createdAt) : 'قبل v30 — التاريخ مش معروف'}
         </div>
       ))}
-      <h3>قايمة انتظار التوسع 🔔</h3>
+      <h3><span className="icon-chip sm"><IconBell /></span>قايمة انتظار التوسع 🔔</h3>
       <p className="muted">عملاء من برّه أسيوط وسوهاج سابوا أرقامهم عشان نبلغهم لما نفتح عندهم: {state.waitlist.length}</p>
       {state.waitlist.length === 0 && <p>مفيش حد مستني التوسع لسه.</p>}
       {[...state.waitlist].sort((a, b) => b.createdAt - a.createdAt).map((w) => (
         <div key={w.id} className="ride">
-          {w.name} ({w.code}) — <a className="link" href={`tel:${w.phone}`}>📞 {w.phone}</a>
+          {w.name} ({w.code}) — <a className="phone-chip" href={`tel:${w.phone}`}><IconPhone /> {w.phone}</a>
           <br />من: {w.pickupLabel} → إلى: {w.destLabel}
           <br />سجّل: {w.createdAt ? fmtTime(w.createdAt) : '—'}
         </div>
       ))}
-      <h3>كل الرحلات</h3>
+      <h3><span className="icon-chip sm"><IconList /></span>كل الرحلات</h3>
       <input placeholder="🔍 ابحث برقم الطلب أو الكود أو الاسم أو الرقم…" value={search} onChange={(e) => setSearch(e.target.value)} />
       {filteredRides.map((r) => (
         <div key={r.orderNo} className="ride">
@@ -1888,7 +1935,7 @@ export default function App() {
           <br />تقييم الراكب للكابتن: {r.passengerRatingForDriver ?? '—'} — تقييم الكابتن للراكب: {r.driverRatingForPassenger ?? '—'}
         </div>
       ))}
-      <button className="link-btn" onClick={() => { if (confirm('متأكد؟ هيمسح كل البيانات المحلية التجريبية.')) update(defaultState()) }}>مسح البيانات التجريبية</button>
+      <button className="btn danger" onClick={() => { if (confirm('متأكد؟ هيمسح كل البيانات المحلية التجريبية.')) update(defaultState()) }}><IconTrash /> مسح البيانات التجريبية</button>
     </div>
   )
 
@@ -1911,7 +1958,7 @@ export default function App() {
       <input placeholder="الكود (6 أرقام)" inputMode="numeric" maxLength={6} value={otpInput} onChange={(e) => setOtpInput(e.target.value.replace(/[^0-9]/g, ''))} />
       <button className="btn" onClick={verifyOtp} disabled={otpBusy}>{otpBusy ? 'بيتأكد…' : 'تأكيد الكود'}</button>
       <p className="muted">حد إرسال الكود: {OTP_MAX_PER_HOUR} أكواد في الساعة لكل رقم.</p>
-      <button className="link-btn" onClick={() => { setOtpSent(false); setOtpInput('') }}>← تغيير الرقم</button>
+      <button className="btn small soft" onClick={() => { setOtpSent(false); setOtpInput('') }}><IconBack /> تغيير الرقم</button>
     </div>
   )
 
@@ -2030,7 +2077,7 @@ export default function App() {
         ) : (
           <div className="card">
             {phoneAuthForm}
-            <button className="link-btn" onClick={() => { setAppRole(null); localStorage.removeItem('indtoktok-app-role'); setRole('passenger') }}>← تغيير الدور</button>
+            <button className="btn small soft" onClick={() => { setAppRole(null); localStorage.removeItem('indtoktok-app-role'); setRole('passenger') }}><IconBack /> تغيير الدور</button>
           </div>
         )}
         <footer className="footer">
@@ -2071,14 +2118,14 @@ export default function App() {
       {role === 'trips' && driverTripsView}
       {role === 'wallet' && walletView}
       {role === 'profile' && (appRole === 'driver' ? driverProfileView : passengerProfileView)}
-      {role === 'admin' && (<><button className="btn small" onClick={() => setRole('driver')}>← رجوع للسواق</button>{adminView}</>)}
+      {role === 'admin' && (<><button className="btn small" onClick={() => setRole('driver')}><IconBack /> رجوع للسواق</button>{adminView}</>)}
       <footer className="footer">
         <p>آخر رحلة: {lastRide ? `${lastRide.orderNo} — ${lastRide.status}` : 'لسه مفيش رحلات'}</p>
-        {appRole === 'passenger' && <button className="link-btn" onClick={() => chooseRole('driver')}>أنا كابتن — دخول السواقين</button>}
+        {appRole === 'passenger' && <button className="btn small" onClick={() => chooseRole('driver')}><IconDriver /> أنا كابتن — دخول السواقين</button>}
         {appRole === 'driver' && (
           <div className="footer-links">
-            <button className="link-btn" onClick={() => setRole('admin')}>الإدارة</button>
-            <button className="link-btn" onClick={() => chooseRole('passenger')}>تبديل — أنا راكب</button>
+            <button className="btn small" onClick={() => setRole('admin')}><IconShield /> الإدارة</button>
+            <button className="btn small soft" onClick={() => chooseRole('passenger')}><IconSwap /> تبديل — أنا راكب</button>
           </div>
         )}
         <p className="muted">ind toktok — com.indtoktok.app — نسخة مستقلة (Capacitor + Firebase) — الإصدار {APP_VERSION}</p>

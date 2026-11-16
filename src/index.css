@@ -37,11 +37,18 @@ body { margin: 0; }
 .icon-chip { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 12px; background: linear-gradient(135deg, var(--amber), var(--orange) 60%, var(--orange-deep)); color: #fff; box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4); vertical-align: -9px; margin-inline-end: 8px; }
 .icon-chip .ic { width: 20px; height: 20px; }
 .icon-chip.green { background: linear-gradient(135deg, #4ade80, var(--green) 60%, var(--green-deep)); box-shadow: 0 4px 12px rgba(22, 163, 74, 0.35); }
+/* نسخة صغيرة من الـ chip لعناوين h3 */
+.icon-chip.sm { width: 26px; height: 26px; border-radius: 9px; vertical-align: -7px; }
+.icon-chip.sm .ic { width: 15px; height: 15px; }
 
 /* التبويبات — أخدود غائر 3D والتبويب النشط بارز لفوق */
 .tabs { display: flex; gap: 6px; margin: 18px 0; padding: 6px; background: linear-gradient(180deg, #f1f5f9, #e2e8f0); border: 1px solid var(--line); border-radius: 999px; box-shadow: 0 2px 6px rgba(15, 23, 42, 0.10) inset, 0 1px 0 rgba(255,255,255,.9); flex-wrap: wrap; }
 .tab { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 11px 8px; border: none; background: transparent; border-radius: 999px; cursor: pointer; font-size: 15px; font-weight: 700; color: var(--muted); font-family: inherit; transition: all 0.15s ease; white-space: nowrap; }
 .tab .ic { width: 19px; height: 19px; }
+/* التبويب غير النشط بارز برضه — زر أبيض 3D مش نص مسطّح */
+.tab:not(.active) { background: linear-gradient(180deg, #ffffff, #f1f5f9); color: #475569; box-shadow: 0 1px 0 rgba(255,255,255,.95) inset, 0 -2px 0 rgba(15, 23, 42, 0.07) inset, 0 4px 10px rgba(15, 23, 42, 0.08), 0 1px 3px rgba(15, 23, 42, 0.06); }
+.tab:not(.active) .ic { background: linear-gradient(180deg, #fef3c7, #fde68a); color: #92400e; border-radius: 8px; padding: 3px; width: 24px; height: 24px; box-shadow: 0 1px 0 rgba(255,255,255,.8) inset, 0 2px 4px rgba(15, 23, 42, 0.12); }
+.tab:not(.active):active { transform: translateY(2px); box-shadow: 0 1px 0 rgba(255,255,255,.95) inset, 0 -1px 0 rgba(15, 23, 42, 0.07) inset, 0 2px 5px rgba(15, 23, 42, 0.08); }
 .tab.active { background: linear-gradient(180deg, var(--amber), var(--orange) 60%, var(--orange-deep)); color: #fff; box-shadow: 0 1px 0 rgba(255,255,255,.5) inset, 0 -3px 0 rgba(154, 52, 18, 0.35) inset, 0 8px 18px rgba(245, 158, 11, 0.45), 0 3px 6px rgba(15, 23, 42, 0.15); transform: translateY(-1px); }
 
 /* البطاقات — ألواح بارزة 3D: ضوء علوي + ظل سفلي عميق */
@@ -56,10 +63,14 @@ input[type="file"] { margin: 8px 0; }
 label { font-weight: 700; font-size: 14px; }
 
 /* الأزرار — أزرار 3D حقيقية: حافة سفلية داكنة + ضغطة بتنزل الزرار لتحت */
-.btn { background: linear-gradient(180deg, var(--amber), var(--orange) 55%, var(--orange-deep)); color: #fff; border: none; border-radius: 999px; padding: 12px 20px; font-size: 15px; font-weight: 800; font-family: inherit; cursor: pointer; margin: 6px 4px 6px 0; box-shadow: 0 1px 0 rgba(255,255,255,.45) inset, 0 -4px 0 rgba(154, 52, 18, 0.35) inset, 0 8px 18px rgba(245, 158, 11, 0.35), 0 3px 6px rgba(15, 23, 42, 0.15); transition: transform 0.08s ease, box-shadow 0.08s ease; display: inline-flex; align-items: center; gap: 6px; text-shadow: 0 1px 2px rgba(0,0,0,.2); }
+.btn { background: linear-gradient(180deg, var(--amber), var(--orange) 55%, var(--orange-deep)); color: #fff; border: none; border-radius: 999px; padding: 12px 20px; font-size: 15px; font-weight: 800; font-family: inherit; cursor: pointer; margin: 6px 4px 6px 0; box-shadow: 0 1px 0 rgba(255,255,255,.45) inset, 0 -4px 0 rgba(154, 52, 18, 0.35) inset, 0 8px 18px rgba(245, 158, 11, 0.35), 0 3px 6px rgba(15, 23, 42, 0.15); transition: transform 0.08s ease, box-shadow 0.08s ease; display: inline-flex; align-items: center; gap: 6px; text-shadow: 0 1px 2px rgba(0,0,0,.2); text-decoration: none; }
 .btn:active { transform: translateY(3px); box-shadow: 0 1px 0 rgba(255,255,255,.45) inset, 0 -1px 0 rgba(154, 52, 18, 0.35) inset, 0 2px 6px rgba(245, 158, 11, 0.3); }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; transform: none; }
-.btn.big { width: 100%; justify-content: center; font-size: 18px; padding: 15px; margin: 10px 0 0; }
+.btn.big { width: 100%; justify-content: center; font-size: 18px; padding: 15px; margin: 10px 0 0; box-shadow: 0 1px 0 rgba(255,255,255,.5) inset, 0 -5px 0 rgba(154, 52, 18, 0.35) inset, 0 12px 24px rgba(245, 158, 11, 0.4), 0 4px 8px rgba(15, 23, 42, 0.15); }
+.btn.big:active { transform: translateY(3px); box-shadow: 0 1px 0 rgba(255,255,255,.5) inset, 0 -1px 0 rgba(154, 52, 18, 0.35) inset, 0 3px 8px rgba(245, 158, 11, 0.3); }
+/* زرار ثانوي 3D فاتح — للرجوع والتعديل بدل اللينك الأزرق المسطّح */
+.btn.soft { background: linear-gradient(180deg, #ffffff, #eef2f7); color: #334155; border: 1px solid #e2e8f0; text-shadow: none; box-shadow: 0 1px 0 rgba(255,255,255,.95) inset, 0 -3px 0 rgba(15, 23, 42, 0.10) inset, 0 6px 14px rgba(15, 23, 42, 0.12), 0 2px 4px rgba(15, 23, 42, 0.08); }
+.btn.soft:active { transform: translateY(3px); box-shadow: 0 1px 0 rgba(255,255,255,.95) inset, 0 -1px 0 rgba(15, 23, 42, 0.10) inset, 0 2px 6px rgba(15, 23, 42, 0.10); }
 .btn.small { padding: 9px 14px; font-size: 13px; box-shadow: 0 1px 0 rgba(255,255,255,.45) inset, 0 -3px 0 rgba(154, 52, 18, 0.35) inset, 0 5px 12px rgba(245, 158, 11, 0.3); }
 .btn.active { background: linear-gradient(180deg, #4ade80, var(--green) 60%, var(--green-deep)); box-shadow: 0 1px 0 rgba(255,255,255,.45) inset, 0 -4px 0 rgba(20, 83, 45, 0.4) inset, 0 8px 18px rgba(22, 163, 74, 0.35), 0 3px 6px rgba(15, 23, 42, 0.15); }
 .btn.danger { background: linear-gradient(180deg, #f87171, #dc2626 60%, #991b1b); box-shadow: 0 1px 0 rgba(255,255,255,.4) inset, 0 -4px 0 rgba(69, 10, 10, 0.45) inset, 0 8px 18px rgba(220, 38, 38, 0.35), 0 3px 6px rgba(15, 23, 42, 0.15); }
@@ -73,7 +84,7 @@ label { font-weight: 700; font-size: 14px; }
 .saved-bar { background: linear-gradient(180deg, #f0fdf4, #dcfce7); border: 1px solid #86efac; border-radius: 16px; padding: 12px 14px; margin-bottom: 12px; font-weight: 600; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; box-shadow: var(--shadow-3d-sm); }
 /* حاوية reCAPTCHA المخفي الخاصة بـ Firebase Phone Auth — لازم تفضل في الصفحة */
 #recaptcha-container { display: contents; }
-.fare-stepper { display: flex; align-items: center; gap: 12px; justify-content: center; margin: 14px 0 4px; }
+.fare-stepper { display: flex; align-items: center; gap: 12px; justify-content: center; margin: 14px 0 4px; background: linear-gradient(180deg, #f1f5f9, #e2e8f0); border: 1px solid var(--line); border-radius: 999px; padding: 8px 10px; box-shadow: 0 2px 6px rgba(15, 23, 42, 0.10) inset, 0 1px 0 rgba(255,255,255,.9); }
 .stepper-btn { width: 56px; height: 56px; font-size: 30px; font-weight: 800; border-radius: 50%; border: 2px solid var(--orange); background: linear-gradient(180deg, #fff, #fef3c7); color: var(--orange-deep); cursor: pointer; box-shadow: 0 1px 0 rgba(255,255,255,.9) inset, 0 -4px 0 rgba(234, 88, 12, 0.25) inset, 0 8px 16px rgba(245, 158, 11, 0.3), 0 3px 6px rgba(15, 23, 42, 0.12); font-family: inherit; transition: transform 0.08s ease, box-shadow 0.08s ease; }
 .stepper-btn:active { transform: translateY(3px); box-shadow: 0 1px 0 rgba(255,255,255,.9) inset, 0 -1px 0 rgba(234, 88, 12, 0.25) inset, 0 2px 6px rgba(245, 158, 11, 0.3); }
 .fare-number { width: 128px !important; text-align: center; font-size: 34px !important; font-weight: 800 !important; border: 2px solid var(--orange) !important; border-radius: 16px !important; padding: 8px !important; background: linear-gradient(180deg, #fffbeb, #fff) !important; box-shadow: 0 2px 6px rgba(15, 23, 42, 0.10) inset, 0 1px 0 rgba(255,255,255,.9), 0 6px 14px rgba(245, 158, 11, 0.15) !important; }
@@ -83,9 +94,15 @@ label { font-weight: 700; font-size: 14px; }
 .progress { height: 12px; background: #e2e8f0; border-radius: 999px; overflow: hidden; }
 .progress-fill { height: 100%; background: linear-gradient(90deg, #f87171, #dc2626); border-radius: 999px; }
 .shot { max-width: 100%; max-height: 220px; border-radius: 16px; margin-top: 8px; display: block; box-shadow: var(--shadow-sm); }
-.stars .star { background: none; border: none; font-size: 28px; color: #d1d5db; cursor: pointer; font-family: inherit; transition: transform 0.1s ease; }
-.stars .star.on { color: var(--orange); }
-.stars .star:active { transform: scale(1.2); }
+/* نجوم التقييم — أزرار 3D سميكة: الدهبي متدرج وبارز، والرمادي غائر */
+.stars { display: inline-flex; gap: 8px; }
+.stars .star { width: 46px; height: 46px; display: inline-flex; align-items: center; justify-content: center; font-size: 26px; line-height: 1; color: #cbd5e1; background: linear-gradient(180deg, #ffffff, #f1f5f9); border: 1px solid #e2e8f0; border-radius: 14px; cursor: pointer; font-family: inherit; padding: 0; transition: transform 0.1s ease, box-shadow 0.1s ease; box-shadow: 0 1px 0 rgba(255,255,255,.95) inset, 0 -3px 0 rgba(15, 23, 42, 0.08) inset, 0 5px 12px rgba(15, 23, 42, 0.12); text-shadow: 0 1px 2px rgba(15, 23, 42, 0.15); }
+.stars .star.on { background: linear-gradient(180deg, #fde68a, var(--orange) 55%, #d97706); color: #fff; border-color: #f59e0b; text-shadow: 0 2px 3px rgba(120, 53, 15, 0.55); transform: scale(1.08); box-shadow: 0 1px 0 rgba(255,255,255,.55) inset, 0 -3px 0 rgba(146, 64, 14, 0.4) inset, 0 8px 16px rgba(245, 158, 11, 0.45), 0 3px 6px rgba(15, 23, 42, 0.15); }
+.stars .star:active { transform: translateY(2px) scale(1.04); box-shadow: 0 1px 0 rgba(255,255,255,.5) inset, 0 -1px 0 rgba(146, 64, 14, 0.4) inset, 0 2px 6px rgba(245, 158, 11, 0.35); }
+/* شريحة تليفون 3D صغيرة — لأرقام الأدمن بدل اللينك الأزرق */
+.phone-chip { display: inline-flex; align-items: center; gap: 6px; background: linear-gradient(180deg, #f0fdf4, #dcfce7); border: 1px solid #86efac; color: #166534; border-radius: 999px; padding: 6px 12px; font-size: 13px; font-weight: 800; text-decoration: none; box-shadow: 0 1px 0 rgba(255,255,255,.9) inset, 0 -2px 0 rgba(22, 163, 74, 0.2) inset, 0 4px 10px rgba(22, 163, 74, 0.2); transition: transform 0.08s ease, box-shadow 0.08s ease; }
+.phone-chip:active { transform: translateY(2px); box-shadow: 0 1px 0 rgba(255,255,255,.9) inset, 0 -1px 0 rgba(22, 163, 74, 0.2) inset, 0 2px 5px rgba(22, 163, 74, 0.18); }
+.phone-chip .ic { width: 15px; height: 15px; }
 .map-box { border: 2px solid #fff; outline: 1px solid var(--line); margin: 10px 0; border-radius: 20px; overflow: hidden; box-shadow: 0 1px 0 rgba(255,255,255,.9) inset, 0 20px 40px rgba(15, 23, 42, 0.18), 0 6px 14px rgba(15, 23, 42, 0.12); }
 .footer { text-align: center; color: var(--muted); font-size: 13px; }
 .toktok-pin { background: transparent; border: none; }
@@ -99,6 +116,8 @@ label { font-weight: 700; font-size: 14px; }
 
 .ride-times { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; margin: 10px 0; font-size: 13px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 10px 12px; }
 .ride-times span { color: #475569; }
+/* عنوان صغير فوق أوقات الرحلة — chip أيقونة + نص */
+.ride-times-head { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 800; color: var(--muted); margin: 10px 0 2px; }
 
 .avatar { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; vertical-align: middle; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.25); display: inline-block; }
 .avatar-placeholder { display: inline-flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #f59e0b, #ea580c); color: #fff; font-weight: 800; font-size: 18px; }
