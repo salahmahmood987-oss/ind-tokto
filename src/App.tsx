@@ -433,7 +433,9 @@ export default function App() {
           label: 'موقعي الحالي',
         }
         setPickup(ll)
-        setPickupLabel('موقعي الحالي')
+        // الخانة نفسها تفضل فاضية — «موقعي الحالي» تظهر كـ placeholder بس،
+        // مش قيمة جوّه الحقل، عشان العميل يقدر يكتب على طول من غير ما يمسحها
+        setPickupLabel('')
       } catch {
         // تجاهل: رفض الإذن أو GPS مش متاح
       }
@@ -729,10 +731,11 @@ export default function App() {
         }
         if (target === 'pickup') {
           setPickup(ll)
-          setPickupLabel('موقعي الحالي')
+          // «موقعي الحالي» placeholder بس — الخانة تفضل فاضية والعميل يكتب على طول
+          setPickupLabel('')
         } else {
           setDestination(ll)
-          setDestLabel('موقعي الحالي')
+          setDestLabel('')
         }
       },
       () => showNotice('مش قادر أوصل للـ GPS — حدد النقطة على الخريطة.'),
@@ -1651,7 +1654,10 @@ export default function App() {
             <div>
               <label>نقطة الركوب</label>
               <div className="suggest-wrap">
-                <input placeholder="منين؟" value={pickupLabel} onChange={(e) => setPickupLabel(e.target.value)} onBlur={() => setPickupSugg([])} />
+                <input className="field-input" placeholder={pickup && pickup.label === 'موقعي الحالي' ? 'موقعي الحالي' : 'منين؟'} value={pickupLabel} onChange={(e) => { setPickupLabel(e.target.value); if (pickup && pickup.label === 'موقعي الحالي') setPickup(null) }} onBlur={() => setPickupSugg([])} />
+                {pickupLabel !== '' && (
+                  <button type="button" className="field-clear" aria-label="مسح" onMouseDown={(e) => e.preventDefault()} onClick={() => { setPickupLabel(''); setPickupSugg([]) }}>×</button>
+                )}
                 {pickupSugg.length > 0 && (
                   <div className="suggest-list">
                     {pickupSugg.map((s) => (
@@ -1670,7 +1676,10 @@ export default function App() {
             <div>
               <label>الوجهة</label>
               <div className="suggest-wrap">
-                <input placeholder="رايح فين؟" value={destLabel} onChange={(e) => setDestLabel(e.target.value)} onBlur={() => setDestSugg([])} />
+                <input className="field-input" placeholder={destination && destination.label === 'موقعي الحالي' ? 'موقعي الحالي' : 'رايح فين؟'} value={destLabel} onChange={(e) => { setDestLabel(e.target.value); if (destination && destination.label === 'موقعي الحالي') setDestination(null) }} onBlur={() => setDestSugg([])} />
+                {destLabel !== '' && (
+                  <button type="button" className="field-clear" aria-label="مسح" onMouseDown={(e) => e.preventDefault()} onClick={() => { setDestLabel(''); setDestSugg([]) }}>×</button>
+                )}
                 {destSugg.length > 0 && (
                   <div className="suggest-list">
                     {destSugg.map((s) => (
