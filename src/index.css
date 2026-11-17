@@ -93,7 +93,24 @@ label { font-weight: 700; font-size: 14px; }
 .offer { border: 1.5px solid #fcd34d; border-radius: 18px; padding: 14px 16px; margin: 10px 0; background: linear-gradient(180deg, #fffbeb, #fef9c3); box-shadow: var(--shadow-3d-sm); }
 .progress { height: 12px; background: #e2e8f0; border-radius: 999px; overflow: hidden; }
 .progress-fill { height: 100%; background: linear-gradient(90deg, #f87171, #dc2626); border-radius: 999px; }
-.shot { max-width: 100%; max-height: 220px; border-radius: 16px; margin-top: 8px; display: block; box-shadow: var(--shadow-sm); }
+.shot { max-width: 100%; max-height: 220px; border-radius: 16px; margin-top: 8px; display: block; box-shadow: var(--shadow-sm); cursor: zoom-in; }
+/* ===== المحفظة (v49): بطاقة المكسب + إحصائيات 3D ===== */
+.wallet-hero { background: linear-gradient(135deg, #4ade80, var(--green) 55%, var(--green-deep)); color: #fff; border-radius: 22px; padding: 20px; margin: 12px 0; text-align: center; box-shadow: 0 1px 0 rgba(255,255,255,.45) inset, 0 -4px 0 rgba(20, 83, 45, 0.35) inset, 0 14px 28px rgba(22, 163, 74, 0.4), 0 4px 8px rgba(15, 23, 42, 0.15); }
+.wallet-hero-label { font-size: 15px; font-weight: 700; opacity: 0.95; }
+.wallet-hero-value { font-size: 44px; font-weight: 800; line-height: 1.2; text-shadow: 0 2px 4px rgba(0,0,0,.25); }
+.wallet-hero-net { font-size: 14px; font-weight: 600; opacity: 0.95; margin-top: 4px; }
+.wallet-stats { margin: 12px 0; }
+.stat-card { background: linear-gradient(180deg, #fff, #f8fafc); border: 1px solid var(--line); border-radius: 18px; padding: 14px; text-align: center; box-shadow: var(--shadow-3d-sm); }
+.stat-num { font-size: 20px; font-weight: 800; }
+.stat-label { font-size: 13px; color: var(--muted); font-weight: 700; margin-top: 2px; }
+/* شارة حالة ملوّنة لرحلات المحفظة */
+.badge.green { background: linear-gradient(135deg, #f0fdf4, #bbf7d0); border-color: #86efac; color: #166534; }
+.badge.red { background: linear-gradient(135deg, #fef2f2, #fecaca); border-color: #fca5a5; color: #991b1b; }
+/* ===== تكبير الصور بملء الشاشة (v49) — بطاقة السواق وسكرين شوت التحويل ===== */
+.lightbox-overlay { position: fixed; inset: 0; z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px; background: rgba(15, 23, 42, 0.88); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); animation: notice-fade 0.18s ease; }
+.lightbox-img { max-width: 94vw; max-height: 78vh; border-radius: 16px; box-shadow: 0 24px 48px rgba(0, 0, 0, 0.5); object-fit: contain; background: #fff; }
+.lightbox-close { position: absolute; top: 16px; left: 16px; width: 44px; height: 44px; border-radius: 50%; border: none; background: linear-gradient(180deg, #fff, #e2e8f0); color: #0f172a; font-size: 20px; font-weight: 800; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,.4); font-family: inherit; }
+.lightbox-hint { color: #e2e8f0; font-size: 13px; font-weight: 700; margin-top: 14px; }
 /* نجوم التقييم — أزرار 3D سميكة: الدهبي متدرج وبارز، والرمادي غائر */
 .stars { display: inline-flex; gap: 8px; }
 .stars .star { width: 46px; height: 46px; display: inline-flex; align-items: center; justify-content: center; font-size: 26px; line-height: 1; color: #cbd5e1; background: linear-gradient(180deg, #ffffff, #f1f5f9); border: 1px solid #e2e8f0; border-radius: 14px; cursor: pointer; font-family: inherit; padding: 0; transition: transform 0.1s ease, box-shadow 0.1s ease; box-shadow: 0 1px 0 rgba(255,255,255,.95) inset, 0 -3px 0 rgba(15, 23, 42, 0.08) inset, 0 5px 12px rgba(15, 23, 42, 0.12); text-shadow: 0 1px 2px rgba(15, 23, 42, 0.15); }

@@ -101,6 +101,8 @@ export interface Ride {
   arrivedAt: number | null
   /** وقت نهاية الرحلة */
   completedAt: number | null
+  /** وقت الإلغاء (v49 — عشان الملغاة تتحسب في فترة الإلغاء مش فترة الطلب) */
+  cancelledAt: number | null
   /** سبب الإلغاء (لو اتلغت) */
   cancelReason: string | null
   /** مين اللي لغى: السواق أو العميل */

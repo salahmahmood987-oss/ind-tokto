@@ -87,6 +87,39 @@ function fmtTime(ts: number | null | undefined): string {
   return new Date(ts).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })
 }
 
+/** تاريخ مختصر (يوم + شهر) — للرحلات في المحفظة */
+function fmtDate(ts: number | null | undefined): string {
+  if (!ts) return '—'
+  return new Date(ts).toLocaleDateString('ar-EG', { day: 'numeric', month: 'short' })
+}
+
+/**
+ * بداية فترة المحفظة (v49) — بتوقيت الجهاز المحلي (مصر):
+ * اليوم = 00:00 النهارده، الأسبوع = آخر 7 أيام (من 6 أيام فاتت 00:00)،
+ * الشهر = أول الشهر 00:00. new Date(y, m, d-6) بيلف الشهور تلقائياً.
+ */
+function periodStartMs(period: 'day' | 'week' | 'month'): number {
+  const now = new Date()
+  if (period === 'day') return new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  if (period === 'week') return new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6).getTime()
+  return new Date(now.getFullYear(), now.getMonth(), 1).getTime()
+}
+
+/** وصف الفترة المعروضة (عشان السواق يعرف بالظبط الأرقام دي بتغطي إيه) */
+function periodLabel(period: 'day' | 'week' | 'month'): string {
+  if (period === 'day') return `النهارده — ${fmtDate(Date.now())}`
+  if (period === 'week') return `من ${fmtDate(periodStartMs('week'))} لحد النهارده`
+  return `من ${fmtDate(periodStartMs('month'))} لحد النهارده`
+}
+
+/** وقت الرحلة اللي بتتحدد بيه فترتها في المحفظة: المكتملة بوقت
+ *  إنهائها، والملغاة بوقت إلغائها، والقديمة (قبل v49) بوقت الطلب. */
+function walletRideTime(r: Ride): number {
+  if (r.status === 'completed') return r.completedAt ?? r.createdAt
+  if (r.status === 'cancelled') return r.cancelledAt ?? r.createdAt
+  return r.createdAt
+}
+
 // صورة شخصية دائرية — لو مفيش صورة يظهر أول حرف من الاسم
 function avatar(url: string | null | undefined, name: string) {
   return url ? (
@@ -420,6 +453,12 @@ export default function App() {
   const [payAmount, setPayAmount] = useState('')
   const [payShot, setPayShot] = useState<File | null>(null)
   const [payBusy, setPayBusy] = useState(false)
+  // المحفظة (v49): فترة العرض + فلتر حالة الرحلات
+  const [walletPeriod, setWalletPeriod] = useState<'day' | 'week' | 'month'>('day')
+  const [walletFilter, setWalletFilter] = useState<'all' | 'completed' | 'cancelled'>('all')
+  // تكبير الصور (بطاقة/تحويل) بملء الشاشة (v49): الأدمن مكنش يقدر يفتح
+  // صورة البطاقة أصلاً — كانت صورة مصغّرة من غير أي إجراء عند الضغط عليها
+  const [lightbox, setLightbox] = useState<string | null>(null)
   const [idCardFile, setIdCardFile] = useState<File | null>(null)
   // التقييم
   const [rateDriver, setRateDriver] = useState(0)
@@ -1045,6 +1084,7 @@ export default function App() {
       acceptedAt: null,
       arrivedAt: null,
       completedAt: null,
+      cancelledAt: null,
       cancelReason: null,
       cancelledBy: null,
       passengerPhotoUrl: state.passenger?.photoUrl ?? null,
@@ -1149,7 +1189,8 @@ export default function App() {
     if (by === 'passenger' && ride.passengerPhone !== state.passenger?.phone) return
     if (by === 'driver' && ride.driverCode !== state.driver.code) return
     if (!['searching', 'matched', 'driver_arrived'].includes(ride.status)) return
-    const next: Ride = { ...ride, status: 'cancelled', cancelReason: reason, cancelledBy: by }
+    // (v49) وقت الإلغاء — عشان الملغاة تظهر في فترة الإلغاء في المحفظة
+    const next: Ride = { ...ride, status: 'cancelled', cancelReason: reason, cancelledBy: by, cancelledAt: Date.now() }
     update({ rides: state.rides.map((r) => (r.orderNo === orderNo ? next : r)) })
     void saveDoc('rides', orderNo, next as unknown as Record<string, unknown>)
     setCancelTarget(null)
@@ -1802,7 +1843,7 @@ export default function App() {
           <button className="btn" onClick={uploadIdCard} disabled={!idCardFile}>رفع صورة البطاقة</button>
           {state.driver.idCardUrl && (
             <div>
-              <img src={state.driver.idCardUrl} alt="صورة البطاقة" className="shot" />
+              <img src={state.driver.idCardUrl} alt="صورة البطاقة — اضغط للتكبير" className="shot" onClick={() => setLightbox(state.driver.idCardUrl)} />
               <p>حالة البطاقة: {state.driver.idCardStatus === 'pending' ? 'بانتظار المراجعة' : state.driver.idCardStatus}</p>
             </div>
           )}
@@ -2107,24 +2148,80 @@ export default function App() {
     </div>
   )
 
+  // ---- المحفظة (v49): مكسب اليوم/الأسبوع/الشهر + كل الرحلات (منها الملغاة) ----
+  // الحسابات من رحلات السواق نفسه بس (driverCode === كوده) — رحلات البحث
+  // (searching) بتاعة سواقين تانيين موجودة في state.rides، فالفلتر ده إجباري
+  // ومفيش رحلة لسواق تاني تظهر هنا أبداً.
+  const walletStart = periodStartMs(walletPeriod)
+  const walletMyRides = state.rides
+    .filter((r) => r.driverCode === state.driver.code && (r.status === 'completed' || r.status === 'cancelled'))
+    .filter((r) => walletRideTime(r) >= walletStart)
+    .sort((a, b) => walletRideTime(b) - walletRideTime(a))
+  const walletCompleted = walletMyRides.filter((r) => r.status === 'completed')
+  const walletCancelled = walletMyRides.filter((r) => r.status === 'cancelled')
+  // المكسب = مجموع أجرة الرحلات المكتملة بس — الملغاة مكسبها صفر ومبتدخلش هنا
+  const walletEarnings = walletCompleted.reduce((s, r) => s + r.fare, 0)
+  // العمولة = مجموع 5% لكل رحلة مكتملة لوحدها — نفس تقريب الخصم اللي بيتسجل
+  // على السيرفر عند إنهاء الرحلة (commissionFor)، فالرقم المعروض مطابق للمديونية
+  const walletCommission = walletCompleted.reduce((s, r) => s + commissionFor(r.fare), 0)
+  const walletNet = Math.round((walletEarnings - walletCommission) * 100) / 100
+  const walletShown = walletFilter === 'completed' ? walletCompleted : walletFilter === 'cancelled' ? walletCancelled : walletMyRides
+
   const walletView = (
     <div className="card">
       <h2><span className="icon-chip green"><IconWallet /></span>محفظة الكابتن</h2>
+      <div className="tabs">
+        <button className={walletPeriod === 'day' ? 'tab active' : 'tab'} onClick={() => setWalletPeriod('day')}>📅 اليوم</button>
+        <button className={walletPeriod === 'week' ? 'tab active' : 'tab'} onClick={() => setWalletPeriod('week')}>🗓️ الأسبوع</button>
+        <button className={walletPeriod === 'month' ? 'tab active' : 'tab'} onClick={() => setWalletPeriod('month')}>📆 الشهر</button>
+      </div>
+      <p className="muted">{periodLabel(walletPeriod)}</p>
+      <div className="wallet-hero">
+        <div className="wallet-hero-label">مكسبك {walletPeriod === 'day' ? 'النهارده' : walletPeriod === 'week' ? 'الأسبوع ده' : 'الشهر ده'}</div>
+        <div className="wallet-hero-value">{money(walletEarnings)}</div>
+        <div className="wallet-hero-net">صافي مكسبك بعد العمولة (5%): <b>{money(walletNet)}</b></div>
+      </div>
+      <div className="grid wallet-stats">
+        <div className="stat-card"><div className="stat-num">🛺 {walletCompleted.length}</div><div className="stat-label">رحلة مكتملة</div></div>
+        <div className="stat-card"><div className="stat-num">💸 {money(walletCommission)}</div><div className="stat-label">عمولة 5%</div></div>
+        <div className="stat-card"><div className="stat-num">❌ {walletCancelled.length}</div><div className="stat-label">رحلة ملغاة (0 ج.م)</div></div>
+        <div className="stat-card"><div className="stat-num">💰 {money(state.driver.totalPaid)}</div><div className="stat-label">إجمالي ما سددته</div></div>
+      </div>
       <p>المديونية الحالية: <b>{money(state.driver.debt)}</b> من حد أقصى {money(MAX_DEBT_EGP)}</p>
       <div className="progress"><div className="progress-fill" style={{ width: `${Math.min(100, (state.driver.debt / MAX_DEBT_EGP) * 100)}%` }} /></div>
       <p>رصيدك في المحفظة: <b style={{ color: 'var(--green)' }}>{money(state.driver.balance ?? 0)}</b> — لو حوّلت أكتر من مديونيتك الزيادة بتتحفظ هنا، وعمولات الرحلات الجاية (5%) بتتخصم من الرصيد ده الأول قبل ما تتسجل مديونية.</p>
-      <p>إجمالي ما سددته: {money(state.driver.totalPaid)} — العمولة 5% من كل رحلة مكتملة تتسجل مديونية تلقائياً.</p>
       {isDebtBlocked(state.driver.debt) && <p className="warn">⛔ وصلت للحد الأقصى — مش هتستقبل رحلات جديدة لحد ما تسدد.</p>}
       <h3><span className="icon-chip sm"><IconSwap /></span>حوّل للإدارة</h3>
       <p>محفظة الإدارة: <b>{state.admin.walletNumber || '— لم يحددها الأدمن بعد —'}</b> ({state.admin.walletName || ''})</p>
       <input placeholder="المبلغ المحوّل (جنيه)" inputMode="numeric" value={payAmount} onChange={(e) => setPayAmount(e.target.value)} />
+      {state.driver.debt > 0 && (
+        <button className="btn small soft" onClick={() => setPayAmount(String(state.driver.debt))}>
+          سدد المديونية كاملة ({money(state.driver.debt)})
+        </button>
+      )}
       <PhotoPicker onPick={setPayShot} label="اختار صورة التحويل" />
       <p>صورة التحويل بتتضغط تلقائياً قبل الإرسال (الحد حوالي 250 كيلوبايت).</p>
       <button className="btn" disabled={payBusy} onClick={submitPayment}>{payBusy ? 'بيتبعت…' : 'ابعت طلب التحويل + صورة التحويل'}</button>
+      <h3><span className="icon-chip sm"><IconHistory /></span>رحلات الفترة ({walletMyRides.length})</h3>
+      <div className="row">
+        <button className={walletFilter === 'all' ? 'btn small' : 'btn small soft'} onClick={() => setWalletFilter('all')}>الكل ({walletMyRides.length})</button>
+        <button className={walletFilter === 'completed' ? 'btn small' : 'btn small soft'} onClick={() => setWalletFilter('completed')}>مكتملة ({walletCompleted.length})</button>
+        <button className={walletFilter === 'cancelled' ? 'btn small' : 'btn small soft'} onClick={() => setWalletFilter('cancelled')}>ملغاة ({walletCancelled.length})</button>
+      </div>
+      {walletShown.length === 0 && <p className="muted">مفيش رحلات في الفترة دي.</p>}
+      {walletShown.map((r) => (
+        <div key={r.orderNo} className="ride">
+          <b>{r.orderNo}</b> — {fmtDate(walletRideTime(r))} {fmtTime(walletRideTime(r))} — {r.status === 'completed' ? <span className="badge green">مكتملة ✅</span> : <span className="badge red">ملغاة ❌</span>}
+          <br />من: {r.pickup.label} — إلى: {r.destination.label}
+          <br />{r.status === 'completed'
+            ? <>الأجرة: <b>{money(r.fare)}</b> — العمولة: {money(commissionFor(r.fare))}</>
+            : <>الأجرة: <b>0 ج.م</b> — {r.cancelledBy === 'passenger' ? 'العميل' : 'أنت'} لغيتها{r.cancelReason ? ` — السبب: ${r.cancelReason}` : ''}</>}
+        </div>
+      ))}
       <h3><span className="icon-chip sm"><IconList /></span>طلباتي</h3>
       {state.payments.filter((p) => p.driverCode === state.driver.code).map((p) => (
         <div key={p.id} className="ride">{p.id} — {money(p.amount)} — {p.status === 'pending' ? 'بانتظار الإدارة' : p.status === 'approved' ? '✅ اتوافق عليه' : '❌ اترفض'}
-          {p.screenshotUrl && <img src={p.screenshotUrl} alt="صورة التحويل" className="shot" />}
+          {p.screenshotUrl && <img src={p.screenshotUrl} alt="صورة التحويل — اضغط للتكبير" className="shot" onClick={() => setLightbox(p.screenshotUrl)} />}
         </div>
       ))}
     </div>
@@ -2216,7 +2313,7 @@ export default function App() {
       {state.payments.map((p) => (
         <div key={p.id} className="ride">
           {p.driverName} ({p.driverCode}) — {money(p.amount)} — {p.status}
-          {p.screenshotUrl && <img src={p.screenshotUrl} alt="صورة التحويل" className="shot" />}
+          {p.screenshotUrl && <img src={p.screenshotUrl} alt="صورة التحويل — اضغط للتكبير" className="shot" onClick={() => setLightbox(p.screenshotUrl)} />}
           {p.status === 'pending' && (
             <div className="row">
               <button className="btn" onClick={() => reviewPayment(p.id, true)}>الفلوس وصلت — موافق ✅</button>
@@ -2230,7 +2327,7 @@ export default function App() {
       {pendingIdCards.map((d) => (
         <div key={d.code} className="ride">
           {d.name} ({d.code}) — <a className="phone-chip" href={`tel:${d.phone}`}><IconPhone /> {d.phone}</a>
-          {d.idCardUrl && <img src={d.idCardUrl} alt="بطاقة السواق" className="shot" />}
+          {d.idCardUrl && <img src={d.idCardUrl} alt="بطاقة السواق — اضغط للتكبير" className="shot" onClick={() => setLightbox(d.idCardUrl)} />}
           <div className="row">
             <button className="btn" onClick={() => reviewDriverIdCard(d.code, 'approved')}>اعتماد البطاقة</button>
             <button className="btn danger" onClick={() => reviewDriverIdCard(d.code, 'rejected')}>رفض البطاقة</button>
@@ -2258,7 +2355,7 @@ export default function App() {
           <br />مديونية: {money(d.debt)} — رصيد: {money(d.balance)} — إجمالي المسدد: {money(d.totalPaid)}
           <br />البطاقة: {idCardStatusLabel(d.idCardStatus)} — سجّل: {d.createdAt ? fmtTime(d.createdAt) : 'قبل v30 — التاريخ مش معروف'}
           <br /><button className="btn small" onClick={() => { if (confirm(`تصفّر التقييم والمحفظة للسواق ${d.name} (${d.code})؟ الصورة والبطاقة وبياناته هيفضلوا زي ما هم.`)) void saveDoc('drivers', d.code, { ratingAvg: 0, ratingCount: 0, debt: 0, balance: 0, totalPaid: 0 }) }}>تصفير التقييم والمحفظة</button>
-          {d.idCardUrl && <img src={d.idCardUrl} alt="بطاقة السواق" className="shot" />}
+          {d.idCardUrl && <img src={d.idCardUrl} alt="بطاقة السواق — اضغط للتكبير" className="shot" onClick={() => setLightbox(d.idCardUrl)} />}
         </div>
       ))}
       {adminUserTab === 'passengers' && adminPassengerUsers.map((p) => (
@@ -2323,6 +2420,16 @@ export default function App() {
         <p>{notice}</p>
         <button className="btn" onClick={() => setNotice('')}>تمام</button>
       </div>
+    </div>
+  ) : null
+  /** تكبير أي صورة (بطاقة سواق أو سكرين شوت تحويل) بملء الشاشة (v49) —
+   *  الضغط على الصورة نفسها مبيقفلهاش (عشان تكبّر وتشوف التفاصيل)،
+   *  الخروج بالضغط برّه الصورة أو على زرار ✕ */
+  const lightboxModal = lightbox ? (
+    <div className="lightbox-overlay" onClick={() => setLightbox(null)}>
+      <button className="lightbox-close" onClick={() => setLightbox(null)} aria-label="إغلاق">✕</button>
+      <img src={lightbox} alt="صورة مكبّرة" className="lightbox-img" onClick={(e) => e.stopPropagation()} />
+      <p className="lightbox-hint">اضغط برّه الصورة للخروج</p>
     </div>
   ) : null
   /** تحديث جوّه التطبيق من غير لينكات: يحمّل الـ APK ويفتح مثبّت أندرويد */
@@ -2486,6 +2593,7 @@ export default function App() {
         </nav>
       )}
       {noticeModal}
+      {lightboxModal}
       {updateModal}
       {outOfAreaModal}
       {launchGateModal}

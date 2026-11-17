@@ -182,6 +182,7 @@ function normalizeRide(id: string, data: Record<string, unknown>): Ride {
     acceptedAt: d.acceptedAt ?? null,
     arrivedAt: d.arrivedAt ?? null,
     completedAt: d.completedAt ?? null,
+    cancelledAt: d.cancelledAt ?? null,
     cancelReason: d.cancelReason ?? null,
     cancelledBy: d.cancelledBy ?? null,
     passengerPhotoUrl: d.passengerPhotoUrl ?? null,
