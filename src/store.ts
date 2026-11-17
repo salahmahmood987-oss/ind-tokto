@@ -23,7 +23,9 @@ export interface AppState {
   /** قايمة انتظار الإطلاق (v44) — عملاء سابوا أرقامهم عشان نبلغهم لما الخدمة تشتغل (للإدارة فقط) */
   launchWaitlist: LaunchWaitlistEntry[]
   admin: AdminSettings
-  /** آخر رقم طلب مستخدم — الطلب الجاي #1001 ثم #1002... */
+  /** آخر رقم طلب مستخدم — حقل قديم (محلي فقط). رقم الطلب بقى من عدّاد
+   *  السيرفر (nextOrderNumber في firebaseDb) من v48 — كل راكب أول رحلة
+   *  ليه كانت #1001 قبل كده، فالرحلات كانت بتتصادم وتتكتب فوق بعض. */
   lastOrderNum: number
   /** آخر كود سواق مستخدم — السواق الجاي D-1002... */
   lastDriverNum: number
@@ -37,16 +39,23 @@ function stableCode(prefix: string, phone: string): string {
   return `${prefix}-${1000 + h}`
 }
 
+/** أرقام الأدمن — الوحيدة اللي بتفتح لوحة الإدارة (صلاح).
+ *  (v48: قبل كده زرار «الإدارة» كان ظاهر لأي سواق وبيفتح كل حاجة من غير أي فحص) */
+export const ADMIN_PHONES = ['+201550364683', '+201515149075']
+
 /** كود عميل ثابت لنفس رقم الموبايل */
 export function clientCodeForPhone(phone: string): string {
   return stableCode('C', phone)
 }
 
-/** كود سواق ثابت لنفس رقم الموبايل — كل سواق ليه كود مختلف.
- *  (v47: قبل كده كل سواق جديد كان بياخد D-1001، فكل السواقين كانوا
- *  بيكتبوا في نفس مستند Firestore وبيورثوا تقييم ومحفظة بعض) */
+/** كود سواق من رقم الموبايل نفسه — D- + أرقام الهاتف (E.164 من غير +).
+ *  (v48: الهاش القديم كان 10,000 قيمة بس — مع 100 سواق احتمال التصادم ~39%
+ *  ويرجع نفس خلل D-1001 بالظبط. الكود من الرقم نفسه مستحيل يتصادم،
+ *  وثابت لنفس الرقم مهما اتسجل من أي جهاز — بشرط تطبيع الرقم بـ toE164Phone
+ *  قبل الاشتقاق، وده بيتعمل في finishAuth والترحيل عند الفتح) */
 export function driverCodeForPhone(phone: string): string {
-  return stableCode('D', phone)
+  const digits = phone.replace(/\D/g, '')
+  return `D-${digits}`
 }
 
 export function defaultDriver(): DriverProfile {

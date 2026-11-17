@@ -8,10 +8,13 @@ import type { MapMode } from './MapView'
 import { IconBack, IconBell, IconCheck, IconDriver, IconEdit, IconHistory, IconList, IconNav, IconPhone, IconPin, IconSettings, IconShield, IconSwap, IconTrash, IconUser, IconWallet } from './icons'
 import logoUrl from './assets/icon-1024.png'
 import { APP_VERSION, VERSION_URL } from './version'
-import { firebaseEnabled, loadDoc, loadLaunch, subscribeDrivers, subscribeLaunchWaitlist, subscribePassengers, subscribePayments, subscribeRides, subscribeWaitlist, uploadImageAsDataUrl, saveDoc } from './firebaseDb'
+import { approvePaymentTx, applyCommissionTx, applyRatingTx, deleteDocById, firebaseEnabled, loadAdminSettings, loadDoc, loadLaunch, nextOrderNumber, saveAdminSettings, subscribeDrivers, subscribeLaunchWaitlist, subscribePassengers, subscribePayments, subscribeRides, subscribeWaitlist, uploadImageAsDataUrl, saveDoc } from './firebaseDb'
+import { getFirebaseAuth } from './firebaseApp'
+import { where } from 'firebase/firestore'
 import { isInServiceArea, isInServiceBBox, OUT_OF_AREA_MESSAGE, OUT_OF_AREA_TITLE } from './geo'
-import { sendOtpCode, verifyOtpCode } from './otp'
+import { sendOtpCode, toE164Phone, verifyOtpCode } from './otp'
 import {
+  ADMIN_PHONES,
   clientCodeForPhone,
   commissionFor,
   defaultDriver,
@@ -321,6 +324,44 @@ export default function App() {
     setVerifiedPhones(v)
     localStorage.setItem('indtoktok-auth', JSON.stringify(v))
   }
+  // (v48) بوابة الإدارة: رقم الأدمن بس هو اللي يفتح لوحة الإدارة — قبل كده
+  // زرار «الإدارة» كان ظاهر لأي سواق وبيفتح كل حاجة من غير أي فحص.
+  // الرقم بيتطبَّع E.164 الأول عشان 0155 و+20155 يبقوا نفس الرقم.
+  const isAdmin =
+    appRole === 'driver' &&
+    ADMIN_PHONES.includes(toE164Phone(verifiedPhones.driver ?? '') ?? '')
+  // هوية المستخدم الحالية — بتحدد نطاق المزامنة (مين يشوف إيه من السيرفر)
+  const passengerPhone = state.passenger?.phone ?? null
+  const driverCode = state.driver.code
+  // (v48) حارس الكتابة على مستند السواق: لو الكود المحلي مش هو الكود
+  // المشتق من رقم الهاتف (كود قديم D-1001 أو هاش v47)، متكتبش على السيرفر
+  // — الترحيل عند الفتح بيصلّح الكود الأول، والكتابة تستنى لحد ما يتصلح.
+  function driverCodeIsCurrent(d: DriverProfile): boolean {
+    if (!d.phone) return true
+    const e164 = toE164Phone(d.phone) ?? d.phone
+    return d.code === driverCodeForPhone(e164)
+  }
+  // (v48) ربط خفيف بجلسة Firebase Auth (مسار الـ Worker بس): الـ UID بتاعه
+  // هو أرقام التليفون نفسه — لو الجلسة بتقول رقم مختلف عن المحفوظ محلياً،
+  // الجلسة هي الصح (بتمنع تزوير localStorage). مسار Firebase الأصلي الـ UID
+  // بتاعه مش رقم تليفون، فبيتجاهل — والحماية الكاملة الحقيقية قواعد Firestore.
+  useEffect(() => {
+    void (async () => {
+      try {
+        const auth = getFirebaseAuth()
+        const uid = auth?.currentUser?.uid
+        if (!uid || !/^\d{12,13}$/.test(uid)) return
+        const e164 = `+${uid}`
+        const role = appRole
+        if (role && verifiedPhones[role] && verifiedPhones[role] !== e164) {
+          saveVerifiedPhones({ ...verifiedPhones, [role]: e164 })
+        }
+      } catch {
+        /* تجاهل — الجلسة مش متاحة */
+      }
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   /** يلغي توثيق رقم الكابتن — بيرجع شاشة التليفون والكود تاني. */
   function clearDriverVerification() {
     const next = { ...verifiedPhones }
@@ -364,7 +405,7 @@ export default function App() {
   const [launchGate, setLaunchGate] = useState(false)
   const [launchBusy, setLaunchBusy] = useState(false)
   // تنبيه التحديث: لو فيه إصدار أحدث على الريبو بيظهر مودال بزر تحديث
-  const [availableUpdate, setAvailableUpdate] = useState<{ version: number; apkUrl: string } | null>(null)
+  const [availableUpdate, setAvailableUpdate] = useState<{ version: number; apkUrl: string; sha256?: string } | null>(null)
   // تحميل التحديث جوّه التطبيق (من غير لينكات): شغال / نسبة التحميل / رسالة فشل
   const [updateBusy, setUpdateBusy] = useState(false)
   const [updateProgress, setUpdateProgress] = useState(0)
@@ -378,6 +419,7 @@ export default function App() {
   // السواق
   const [payAmount, setPayAmount] = useState('')
   const [payShot, setPayShot] = useState<File | null>(null)
+  const [payBusy, setPayBusy] = useState(false)
   const [idCardFile, setIdCardFile] = useState<File | null>(null)
   // التقييم
   const [rateDriver, setRateDriver] = useState(0)
@@ -400,10 +442,11 @@ export default function App() {
     Math.min(FARE_MAX, parseInt(fareText || '0', 10) || FARE_MIN),
   )
 
+  // (v48) الرحلة النشطة بتاعة العميل ده بس — قبل كده أي راكب كان بيشوف
+  // رحلة أي راكب تاني ويقدر يلغيها ويغيّر سعرها، ومكانش يعرف يطلب أصلاً.
   const activeRide = [...state.rides]
     .reverse()
-    .find((r) => ['searching', 'matched', 'driver_arrived', 'on_trip'].includes(r.status))
-  const lastRide = [...state.rides].reverse()[0]
+    .find((r) => passengerPhone !== null && r.passengerPhone === passengerPhone && ['searching', 'matched', 'driver_arrived', 'on_trip'].includes(r.status))
   // رحلة الكابتن الحالية ورحلاته السابقة (مكتملة أو ملغاة)
   const myCurrentRide = state.rides.find((r) => r.driverCode === state.driver.code && ['matched', 'driver_arrived', 'on_trip'].includes(r.status))
   // السواق وصل للعميل؟ لوكيشن الوجهة يظهر له بس بعد الوصول (driver_arrived أو on_trip)
@@ -415,6 +458,9 @@ export default function App() {
   const myPassengerRides = dedupeRides(state.rides
     .filter((r) => state.passenger && r.passengerCode === state.passenger.code))
     .sort((a, b) => b.createdAt - a.createdAt)
+  // (v48) آخر رحلة بتاعتي أنا بس (كعميل أو كسواق) — قبل كده التذييل كان
+  // بيعرض رقم وآخر حالة لرحلة شخص تاني.
+  const lastRide = myPassengerRides[0] ?? myPastRides[0] ?? undefined
 
   // ---- طلب إذن الموقع فور فتح التطبيق ----
   // أول ما التطبيق يفتح نطلب إذن الموقع من النظام، ولو اتوافق عليه
@@ -480,55 +526,143 @@ export default function App() {
       if (navigator.vibrate) navigator.vibrate([400, 200, 400, 200, 400])
     } catch { /* ignore */ }
   }
-  // مزامنة حية للرحلات من Firestore — طلبات العملاء توصل للسواق فوراً
+  // (v48) مزامنة حية للرحلات — حسب الدور: الأدمن يشوف الكل، السواق يشوف
+  // الطلبات المتاحة + رحلاته، والعميل يشوف رحلاته بس. قبل كده كل جهاز
+  // كان بينزّل كل الرحلات والسواقين والعملاء والتحويلات (بطايق وأرقام).
   useEffect(() => {
     if (!firebaseEnabled) return
-    return subscribeRides((remote) => {
-      setState((s) => {
-        const merged = mergeRides(s.rides, remote)
-        return merged === s.rides ? s : { ...s, rides: merged }
+    if (isAdmin) {
+      return subscribeRides((remote) => {
+        setState((s) => {
+          const merged = mergeRides(s.rides, remote)
+          return merged === s.rides ? s : { ...s, rides: merged }
+        })
       })
-    })
-  }, [])
-  // مزامنة حية لطلبات التحويل — طلب سداد من سواق تاني يوصل للإدارة فوراً
+    }
+    if (appRole === 'driver') {
+      const unsubs: Array<() => void> = []
+      // الطلبات المتاحة (searching) — مع تنضيف اللي اتاخدت من سواق تاني
+      // (الطلب اللي يختفي من الاستعلام ده وهو لسه searching محلياً معناه
+      // إنه اتقبل أو اتلغى — ولو فضل ظاهر السواق هيبعت عرض على رحلة مش بتاعته)
+      unsubs.push(subscribeRides((remote) => {
+        const remoteIds = new Set(remote.map((r) => r.orderNo))
+        setState((s) => {
+          const merged = mergeRides(s.rides, remote)
+          const pruned = merged.filter((r) => {
+            if (r.status !== 'searching') return true
+            if (remoteIds.has(r.orderNo)) return true
+            if (s.passenger?.phone && r.passengerPhone === s.passenger.phone) return true
+            if (Date.now() - r.createdAt < 120000) return true
+            return false
+          })
+          return pruned.length === s.rides.length && merged === s.rides ? s : { ...s, rides: pruned }
+        })
+      }, [where('status', '==', 'searching')]))
+      // رحلاتي أنا كسواق (أي حالة) — بس لو كودي الحالي مشتق من رقمي،
+      // عشان كود قديم (D-1001) ميسحبش رحلات سواق تاني
+      const me = stateRef.current.driver
+      if (me.phone && driverCodeIsCurrent(me)) {
+        unsubs.push(subscribeRides((remote) => {
+          setState((s) => {
+            const merged = mergeRides(s.rides, remote)
+            return merged === s.rides ? s : { ...s, rides: merged }
+          })
+        }, [where('driverCode', '==', me.code)]))
+      }
+      return () => unsubs.forEach((u) => u())
+    }
+    if (appRole === 'passenger' && passengerPhone) {
+      return subscribeRides((remote) => {
+        setState((s) => {
+          const merged = mergeRides(s.rides, remote)
+          return merged === s.rides ? s : { ...s, rides: merged }
+        })
+      }, [where('passengerPhone', '==', passengerPhone)])
+    }
+    return undefined
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [firebaseEnabled, isAdmin, appRole, passengerPhone, driverCode, state.driver.phone])
+  // مزامنة حية لطلبات التحويل — الأدمن يشوف الكل، السواق يشوف طلباته بس
   useEffect(() => {
     if (!firebaseEnabled) return
-    return subscribePayments((remote) => {
-      setState((s) => {
-        const merged = mergePayments(s.payments, remote)
-        return merged === s.payments ? s : { ...s, payments: merged }
+    if (isAdmin) {
+      return subscribePayments((remote) => {
+        setState((s) => {
+          const merged = mergePayments(s.payments, remote)
+          return merged === s.payments ? s : { ...s, payments: merged }
+        })
       })
-    })
-  }, [])
-  // مزامنة حية للسواقين المسجلين — للإدارة بس: السواق الجديد يظهر فوراً في قسم المستخدمين
+    }
+    const me = stateRef.current.driver
+    if (appRole === 'driver' && me.phone && driverCodeIsCurrent(me)) {
+      return subscribePayments((remote) => {
+        setState((s) => {
+          const merged = mergePayments(s.payments, remote)
+          return merged === s.payments ? s : { ...s, payments: merged }
+        })
+      }, [where('driverCode', '==', me.code)])
+    }
+    setState((s) => (s.payments.length ? { ...s, payments: [] } : s))
+    return undefined
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [firebaseEnabled, isAdmin, appRole, driverCode, state.driver.phone])
+  // مزامنة حية للسواقين — الأدمن يشوف الكل؛ غيره يشوف المتاحين بس
+  // (من غير صورة البطاقة — صور البطايق متتسحبش على موبايل حد غير الأدمن)
   useEffect(() => {
     if (!firebaseEnabled) return
+    if (isAdmin) {
+      return subscribeDrivers((remote) => {
+        setState((s) => ({ ...s, drivers: remote }))
+      })
+    }
     return subscribeDrivers((remote) => {
-      setState((s) => ({ ...s, drivers: remote }))
-    })
-  }, [])
-  // مزامنة حية للعملاء المسجلين — للإدارة بس: العميل الجديد يظهر فوراً في قسم المستخدمين
+      const stripped = remote.map((d) => ({ ...d, idCardUrl: null }))
+      setState((s) => ({ ...s, drivers: stripped }))
+    }, [where('online', '==', true)])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [firebaseEnabled, isAdmin])
+  // مزامنة حية للعملاء المسجلين — للإدارة بس
   useEffect(() => {
     if (!firebaseEnabled) return
+    if (!isAdmin) {
+      setState((s) => (s.passengers.length ? { ...s, passengers: [] } : s))
+      return undefined
+    }
     return subscribePassengers((remote) => {
       setState((s) => ({ ...s, passengers: remote }))
     })
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [firebaseEnabled, isAdmin])
   // مزامنة حية لقايمة انتظار التوسع — للإدارة بس
   useEffect(() => {
     if (!firebaseEnabled) return
+    if (!isAdmin) {
+      setState((s) => (s.waitlist.length ? { ...s, waitlist: [] } : s))
+      return undefined
+    }
     return subscribeWaitlist((remote) => {
       setState((s) => ({ ...s, waitlist: remote }))
     })
-  }, [])
-  // قراءة إعدادات الإطلاق عند الفتح + مزامنة حية لقايمة انتظار الإطلاق (للإدارة)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [firebaseEnabled, isAdmin])
+  // قراءة إعدادات الإطلاق + رقم محفظة الأدمن عند الفتح + مزامنة حية لقايمة انتظار الإطلاق (للإدارة)
   useEffect(() => {
     if (!firebaseEnabled) return
     void loadLaunch().then(setLaunch)
+    // (v48) رقم محفظة الأدمن من السيرفر — قبل كده كان محلي بس على جهاز صلاح،
+    // فالسواقين على موبايلاتهم كانوا بيشوفوا «لم يحددها الأدمن بعد».
+    void loadAdminSettings().then((s) => {
+      if (s && (s.walletNumber || s.walletName)) update({ admin: s })
+    })
+    if (!isAdmin) {
+      setState((s) => (s.launchWaitlist.length ? { ...s, launchWaitlist: [] } : s))
+      return undefined
+    }
     return subscribeLaunchWaitlist((remote) => {
       setState((s) => ({ ...s, launchWaitlist: remote }))
     })
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [firebaseEnabled, isAdmin])
   // فحص التحديثات عند الفتح: لو فيه إصدار أحدث على الريبو يظهر تنبيه جوّه التطبيق
   useEffect(() => {
     let cancelled = false
@@ -541,7 +675,7 @@ export default function App() {
         if (cancelled || !data || typeof data.version !== 'number') return
         if (data.version <= APP_VERSION) return
         if (localStorage.getItem('indtoktok-update-dismissed') === String(data.version)) return
-        setAvailableUpdate({ version: data.version, apkUrl: typeof data.apkUrl === 'string' ? data.apkUrl : '' })
+        setAvailableUpdate({ version: data.version, apkUrl: typeof data.apkUrl === 'string' ? data.apkUrl : '', sha256: typeof data.sha256 === 'string' ? data.sha256 : undefined })
       })
       .catch(() => {
         // مفيش نت أو الملف مش موجود — نتجاهل بصمت
@@ -655,6 +789,31 @@ export default function App() {
     const code = state.driver.code
     if (!code || !firebaseEnabled) return
     let cancelled = false
+    // (v48) ترحيل لمرة واحدة من كود قديم (D-1001 أو هاش v47) للكود الجديد
+    // المشتق من رقم الهاتف. بينقل المستند القديم للكود الجديد ويمسح القديم —
+    // بس لو المستند القديم بتاع رقمي أنا (لو بتاع سواق تاني ميتلمسش خالص).
+    // بعد الترحيل الكود المحلي بيتغير والإفكت ده بيرجع يشتغل على الكود الجديد.
+    const curPhone = stateRef.current.driver.phone
+    if (curPhone) {
+      const e164 = toE164Phone(curPhone) ?? curPhone
+      const want = driverCodeForPhone(e164)
+      if (code !== want) {
+        void (async () => {
+          const newDoc = await loadDoc('drivers', want)
+          if (!newDoc) {
+            const oldDoc = await loadDoc('drivers', code)
+            if (oldDoc && (oldDoc.phone as string) === e164) {
+              await saveDoc('drivers', want, { ...(oldDoc as Record<string, unknown>), code: want, phone: e164 })
+              await deleteDocById('drivers', code)
+            }
+          }
+          if (!cancelled) update({ driver: { ...stateRef.current.driver, code: want, phone: e164 } })
+        })()
+        return () => {
+          cancelled = true
+        }
+      }
+    }
     void loadDoc('drivers', code).then((doc) => {
       if (cancelled || !doc) return
       const cur = stateRef.current.driver
@@ -687,6 +846,11 @@ export default function App() {
   }, [state.driver.code])
 
   // مشاركة موقع السواق إجبارية وهو متاح — من غير موقع حقيقي مفيش طلبات ولا مسافات
+  // (v48) الموقع بيوصل للسيرفر فعلاً: كل 10 ثواني لمستند الرحلة الحالية
+  // (عشان العميل يشوف الكابتن لايف) وكل 30 ثانية لمستند السواق (عشان خريطة
+  // العملاء). قبل كده التِك كان محلي بس — والعميل كان بيشوف نقطة ثابتة.
+  const lastRideLocSaveRef = useRef(0)
+  const lastDriverLocSaveRef = useRef(0)
   useEffect(() => {
     if (!state.driver.online) return
     const tick = () => {
@@ -700,7 +864,7 @@ export default function App() {
               currentLng: pos.coords.longitude,
             },
             rides: s.rides.map((r) =>
-              r.status === 'matched' || r.status === 'driver_arrived'
+              r.status === 'matched' || r.status === 'driver_arrived' || r.status === 'on_trip'
                 ? {
                     ...r,
                     driverLat: pos.coords.latitude,
@@ -710,6 +874,29 @@ export default function App() {
                 : r,
             ),
           }))
+          // حفظ على السيرفر (مقيّد بالوقت) — بس لو كودي الحالي مشتق من رقمي
+          const now = Date.now()
+          const me = stateRef.current.driver
+          if (!driverCodeIsCurrent(me)) return
+          const active = stateRef.current.rides.find(
+            (r) => r.driverCode === me.code && ['matched', 'driver_arrived', 'on_trip'].includes(r.status),
+          )
+          if (active && now - lastRideLocSaveRef.current > 10000) {
+            lastRideLocSaveRef.current = now
+            void saveDoc('rides', active.orderNo, {
+              driverLat: pos.coords.latitude,
+              driverLng: pos.coords.longitude,
+              driverLocAt: now,
+            })
+          }
+          if (now - lastDriverLocSaveRef.current > 30000) {
+            lastDriverLocSaveRef.current = now
+            void saveDoc('drivers', me.code, {
+              online: true,
+              currentLat: pos.coords.latitude,
+              currentLng: pos.coords.longitude,
+            })
+          }
         },
         () => {
           // الموقع مقفول أو مفيش GPS: بنسيب آخر موقع معروف زي ما هو — مفيش حركة وهمية
@@ -776,7 +963,9 @@ export default function App() {
       destLabel: outOfArea.destLabel,
       createdAt: Date.now(),
     }
-    void saveDoc('waitlist', `${state.passenger.phone}-${Date.now()}`, entry)
+    // (v48) المعرّف هو رقم التليفون نفسه — قبل كده نفس الرقم كان بيتسجل
+    // مرات عديدة في القايمة (phone-Date.now).
+    void saveDoc('waitlist', state.passenger.phone, entry)
     setOutOfArea(null)
     showNotice('تمام! سجلنا رقمك وهنبلغك أول ما نفتح في منطقتك 👍')
   }
@@ -784,7 +973,8 @@ export default function App() {
   /** عميل داس «بلّغني لما نبدأ» في مودال الإطلاق — نسجل رقمه في قايمة انتظار الإطلاق */
   function notifyLaunch() {
     if (!state.passenger) return
-    void saveDoc('launchWaitlist', `${state.passenger.phone}-${Date.now()}`, {
+    // (v48) المعرّف هو رقم التليفون نفسه — قبل كده نفس الرقم كان بيتسجل مرات عديدة.
+    void saveDoc('launchWaitlist', state.passenger.phone, {
       phone: state.passenger.phone,
       name: state.passenger.name,
       createdAt: Date.now(),
@@ -831,9 +1021,11 @@ export default function App() {
         setOutOfArea({ pickupLabel: from.label, destLabel: to.label })
         return
       }
-      const orderNum = state.lastOrderNum + 1
+      // (v48) رقم الطلب من عدّاد السيرفر — قبل كده كان عدّاد محلي يبدأ من 1000
+      // على كل جهاز، فأول رحلة لكل راكب كانت #1001 وبتتكتب فوق رحلة راكب تاني.
+      const orderNum = await nextOrderNumber()
       const ride: Ride = {
-        orderNo: `#${orderNum}`,
+        orderNo: orderNum,
         passengerCode: state.passenger.code,
         passengerName: state.passenger.name,
         passengerPhone: state.passenger.phone,
@@ -860,7 +1052,7 @@ export default function App() {
       passengerRatingForDriver: null,
       driverRatingForPassenger: null,
     }
-    update({ rides: [...state.rides, ride], lastOrderNum: orderNum })
+    update({ rides: [...state.rides, ride] })
     void saveDoc('rides', ride.orderNo, ride as unknown as Record<string, unknown>)
     showNotice(`طلبك ${ride.orderNo} اتبعت للسواقين القريبين.`)
     } finally {
@@ -869,6 +1061,11 @@ export default function App() {
   }
 
   function acceptOffer(ride: Ride, offer: Offer) {
+    // (v48) تحقق ملكية وحالة: الرحلة دي بتاعتي أنا، ولسه مستنية عروض،
+    // والعرض ده مبعوت على نفس الرحلة — قبل كده أي حد كان يقدر يقبل عرض على رحلة غيره.
+    if (ride.passengerPhone !== state.passenger?.phone) return
+    if (ride.status !== 'searching') return
+    if (offer.rideId !== ride.orderNo) return
     const updated: Ride = {
       ...ride,
       status: 'matched',
@@ -877,8 +1074,10 @@ export default function App() {
       driverCode: offer.driverCode,
       driverName: offer.driverName,
       driverPhone: offer.driverPhone,
-      driverLat: ride.pickup.lat + 0.012,
-      driverLng: ride.pickup.lng + 0.012,
+      // (v48) موقع الكابتن الحقيقي من العرض نفسه — قبل كده كان موقع مزيف
+      // ثابت (+0.012 شمال نقطة الركوب) ومبيتحركش أبداً.
+      driverLat: offer.driverLat ?? ride.pickup.lat,
+      driverLng: offer.driverLng ?? ride.pickup.lng,
       driverLocAt: Date.now(),
       acceptedAt: Date.now(),
       driverPhotoUrl: offer.driverPhotoUrl ?? null,
@@ -889,7 +1088,25 @@ export default function App() {
   }
 
   /** السواق يبعت عرض بسعره (مفاوضة) — السعر اللي يكتبه هو عرضه للعميل. */
-  function sendDriverOffer(ride: Ride, price: number) {
+  async function sendDriverOffer(ride: Ride, price: number) {
+    // (v48) العرض بيتأكد من السيرفر طازج قبل الإرسال: الرحلة لسه مستنية
+    // عروض ولسه مفيهاش كابتن — القايمة المحلية ممكن تكون قديمة (رحلة اتاخدت
+    // من سواق تاني)، والعرض على رحلة متاخدة كان بيرجّع حالتها searching تاني.
+    // ولو السواق وصل حد المديونية أو مش متاح، مفيش عروض أصلاً.
+    if (isDebtBlocked(state.driver.debt)) {
+      showNotice('وصلت لحد المديونية — سدّد الأول عشان تبعت عروض.')
+      return
+    }
+    if (!state.driver.online) {
+      showNotice('لازم تبقى متاح (الزرار الأخضر) عشان تبعت عروض.')
+      return
+    }
+    if (ride.status !== 'searching') return
+    const fresh = await loadDoc('rides', ride.orderNo)
+    if (fresh && (fresh.status !== 'searching' || (fresh.driverCode as string | null))) {
+      showNotice('الرحلة دي اتاخدت خلاص — شوف الطلبات المتاحة.')
+      return
+    }
     const offer: Offer = {
       id: `${ride.orderNo}-${state.driver.code}`,
       rideId: ride.orderNo,
@@ -914,6 +1131,8 @@ export default function App() {
 
   /** العميل يحدّث سعره المقترح وهو مستني عروض (يرفعه عشان يجذب سواقين). */
   function updatePassengerFare(ride: Ride, newFare: number) {
+    // (v48) السعر بيتغير لرحلتي أنا بس وهي لسه مستنية عروض.
+    if (ride.passengerPhone !== state.passenger?.phone) return
     if (ride.status !== 'searching') return
     const updated: Ride = { ...ride, fare: newFare }
     update({ rides: state.rides.map((r) => (r.orderNo === ride.orderNo ? updated : r)) })
@@ -925,6 +1144,11 @@ export default function App() {
   function cancelRide(orderNo: string, reason: string, by: 'driver' | 'passenger') {
     const ride = state.rides.find((r) => r.orderNo === orderNo)
     if (!ride) return
+    // (v48) الإلغاء لطرف في الرحلة بس، ورحلة لسه شغالة — رحلة مكتملة أو
+    // ملغاة مينفعش تتلغي تاني (والعمولة بتاعتها مبتتعكسش لو اتلغت بعد الإنهاء).
+    if (by === 'passenger' && ride.passengerPhone !== state.passenger?.phone) return
+    if (by === 'driver' && ride.driverCode !== state.driver.code) return
+    if (!['searching', 'matched', 'driver_arrived'].includes(ride.status)) return
     const next: Ride = { ...ride, status: 'cancelled', cancelReason: reason, cancelledBy: by }
     update({ rides: state.rides.map((r) => (r.orderNo === orderNo ? next : r)) })
     void saveDoc('rides', orderNo, next as unknown as Record<string, unknown>)
@@ -937,6 +1161,17 @@ export default function App() {
   function setRideStatus(orderNo: string, status: Ride['status']) {
     const ride = state.rides.find((r) => r.orderNo === orderNo)
     if (!ride) return
+    // (v48) تغيير الحالة للكابتن بتاع الرحلة بس، وبالترتيب الصحيح بس —
+    // قبل كده أي إنهاء مكرر كان بيخصم العمولة 5% تاني، وإنهاء رحلة
+    // لسه ما بدأتش كان بيخصم عمولة على رحلة لم تتم.
+    if (ride.driverCode !== state.driver.code) return
+    if (ride.status === 'completed' || ride.status === 'cancelled') return
+    const allowed: Record<string, string[]> = {
+      driver_arrived: ['matched'],
+      on_trip: ['driver_arrived'],
+      completed: ['on_trip'],
+    }
+    if (!allowed[status]?.includes(ride.status)) return
     const next: Ride = { ...ride, status }
     if (status === 'driver_arrived' && !next.arrivedAt) next.arrivedAt = Date.now()
     if (status === 'completed' && !next.completedAt) next.completedAt = Date.now()
@@ -953,7 +1188,16 @@ export default function App() {
         balance: Math.round(((driver.balance ?? 0) - fromBalance) * 100) / 100,
         debt: Math.round((driver.debt + commission - fromBalance) * 100) / 100,
       }
-      void saveDoc('drivers', driver.code, driver as unknown as Record<string, unknown>)
+      // (v48) الخصم النهائي في معاملة ذرّية من أحدث قراءة على السيرفر —
+      // إنهاء مكرر من جهازين مبيخصمش مرتين. النتيجة بتصحح المحلي بعد ما توصل.
+      void applyCommissionTx(driver.code, commission).then((res) => {
+        if (res.ok && res.debt !== undefined && res.balance !== undefined) {
+          update({ driver: { ...stateRef.current.driver, debt: res.debt, balance: res.balance } })
+        } else if (driverCodeIsCurrent(driver)) {
+          // مفيش نت — الحساب المحلي يتحفظ كأفضل جهد (نفس سلوك قبل كده)
+          void saveDoc('drivers', driver.code, { debt: driver.debt, balance: driver.balance })
+        }
+      })
     }
     update({ rides, driver })
     void saveDoc('rides', orderNo, next as unknown as Record<string, unknown>)
@@ -975,41 +1219,25 @@ export default function App() {
       ? { ...ride, passengerRatingForDriver: value }
       : { ...ride, driverRatingForPassenger: value }
     update({ rides: state.rides.map((r) => (r.orderNo === orderNo ? updated : r)) })
-    void saveDoc('rides', orderNo, updated as unknown as Record<string, unknown>)
-    // متوسط المقصود بالتقييم بيتحدث في مستنده على السيرفر (مش في ملف جهازك)
-    if (by === 'passenger' && ride.driverCode) {
-      void loadDoc('drivers', ride.driverCode).then((doc) => {
-        const avg = (doc?.ratingAvg as number) ?? state.driver.ratingAvg ?? 0
-        const count = (doc?.ratingCount as number) ?? state.driver.ratingCount ?? 0
-        const n = count + 1
-        const next = {
-          ...((doc ?? {}) as Record<string, unknown>),
-          ratingAvg: Math.round(((avg * count + value) / n) * 10) / 10,
-          ratingCount: n,
+    // (v48) التقييم في معاملة ذرّية على السيرفر: التقييم لنفس الرحلة مرة
+    // واحدة بس (الحارس جوّه المعاملة)، والمتوسط والعداد من أحدث قراءة —
+    // تقييمان متزامنان لنفس السواق مبيضيّعوش بعض.
+    void applyRatingTx(orderNo, by, value).then((res) => {
+      if (res.ok) {
+        if (by === 'passenger' && stateRef.current.driver.code === ride.driverCode && res.ratingAvg !== undefined && res.ratingCount !== undefined) {
+          update({ driver: { ...stateRef.current.driver, ratingAvg: res.ratingAvg, ratingCount: res.ratingCount } })
         }
-        void saveDoc('drivers', ride.driverCode!, next)
-        if (state.driver.code === ride.driverCode) {
-          update({ driver: { ...state.driver, ratingAvg: next.ratingAvg as number, ratingCount: n } })
+        if (by === 'driver' && stateRef.current.passenger?.phone === ride.passengerPhone && res.ratingAvg !== undefined && res.ratingCount !== undefined) {
+          update({ passenger: { ...stateRef.current.passenger, ratingAvg: res.ratingAvg, ratingCount: res.ratingCount } })
         }
-      })
-    }
-    if (by === 'driver' && ride.passengerPhone) {
-      void loadDoc('passengers', ride.passengerPhone).then((doc) => {
-        const avg = (doc?.ratingAvg as number) ?? state.passenger?.ratingAvg ?? 0
-        const count = (doc?.ratingCount as number) ?? state.passenger?.ratingCount ?? 0
-        const n = count + 1
-        const next = {
-          ...((doc ?? {}) as Record<string, unknown>),
-          ratingAvg: Math.round(((avg * count + value) / n) * 10) / 10,
-          ratingCount: n,
-        }
-        void saveDoc('passengers', ride.passengerPhone!, next)
-        if (state.passenger?.phone === ride.passengerPhone) {
-          update({ passenger: { ...state.passenger, ratingAvg: next.ratingAvg as number, ratingCount: n } })
-        }
-      })
-    }
-    showNotice('شكراً! تقييمك اتسجل.')
+        showNotice('شكراً! تقييمك اتسجل.')
+        return
+      }
+      // فشل (اتقيّم قبل كده من جهاز تاني، أو مفيش نت) — نرجّع التقييم المحلي
+      // زي ما كان، والسيرفر هو الصح.
+      update({ rides: stateRef.current.rides.map((r) => (r.orderNo === orderNo ? ride : r)) })
+      showNotice(res.reason === 'already-rated' ? 'التقييم ده اتسجل قبل كده.' : 'مقدرناش نسجّل التقييم — تأكد من النت وحاول تاني.')
+    })
   }
 
   // ---- OTP حقيقي — Firebase Phone Auth (الكود يوصل SMS، مش بيظهر هنا) ----
@@ -1062,15 +1290,26 @@ export default function App() {
 
   /** يكمل الدخول بعد تأكيد الرقم — للسواق والعميل (يستخدمه تأكيد الكود والتحقق الفوري). */
   async function finishAuth() {
-    const phone = regPhone.trim()
+    // (v48) الرقم بيتطبَّع E.164 الأول (+20155...) — قبل كده نفس الرقم بصيغ
+    // مختلفة (0155/+20155) كان بياخد كود سواق مختلف وملف جديد فارغ،
+    // ومحفظته وتقييماته بتتهجر في الملف القديم.
+    const rawPhone = regPhone.trim()
+    const phone = toE164Phone(rawPhone) ?? rawPhone
     const authRole: 'passenger' | 'driver' = appRole ?? 'passenger'
     saveVerifiedPhones({ ...verifiedPhones, [authRole]: phone })
     if (authRole === 'passenger') {
       const prev = state.passenger
       const samePhone = prev?.phone === phone
       // لو مفيش بيانات محلية (إعادة تثبيت)، اقرأ نسخة السيرفر الأول
-      // قبل ما تكتب فوقها — عشان الاسم والصورة والتقييم ميرجعوش صفر
-      const server = !prev ? await loadDoc('passengers', phone) : null
+      // قبل ما تكتب فوقها — عشان الاسم والصورة والتقييم ميرجعوش صفر.
+      // (v48) بنجرّب المفتاح المطبَّع الأول، ولو مش موجود بنجرّب المفتاح
+      // الخام القديم وبنرحّل المستند للمفتاح المطبَّع.
+      let server = !prev ? await loadDoc('passengers', phone) : null
+      let migratedFromRaw = false
+      if (!prev && !server && rawPhone !== phone) {
+        server = await loadDoc('passengers', rawPhone)
+        migratedFromRaw = !!server
+      }
       const profile = {
         name: prev?.name || (server?.name as string) || 'عميل',
         phone,
@@ -1084,39 +1323,55 @@ export default function App() {
       }
       update({ passenger: profile })
       void saveDoc('passengers', phone, profile)
+      if (migratedFromRaw) void deleteDocById('passengers', rawPhone)
       showNotice(`أهلاً ${profile.name}! رقمك اتأكد وكودك ${profile.code}.`)
     } else {
-      // v47: كود فريد ثابت من رقم الموبايل — قبل كده كل سواق جديد كان
-      // بياخد D-1001 وبيورث تقييم ومحفظة وصورة أي سواق اتسجل قبله.
+      // v48: الكود من رقم الهاتف نفسه (D- + الأرقام) — مستحيل يتصادم.
+      // (v47 كان هاش من 10,000 قيمة بس — مع 100 سواق احتمال التصادم ~39%
+      // ويرجع نفس خلل D-1001 بالظبط)
       const code = driverCodeForPhone(phone)
       // لو السواق ده مسجل قبل كده بنفس الرقم (إعادة تثبيت)، رجّع ملفه هو بس
       const server = await loadDoc('drivers', code)
       const ownDoc = server && (server.phone as string) === phone ? server : null
+      // ترحيل من كود قديم (D-1001 أو هاش v47): لو المستند القديم بتاع رقمي،
+      // انقل بياناته للكود الجديد وامسح القديم.
+      let migrated: Record<string, unknown> | null = null
+      if (!ownDoc) {
+        const oldCode = state.driver.code
+        if (oldCode && oldCode !== code) {
+          const oldDoc = await loadDoc('drivers', oldCode)
+          if (oldDoc && (oldDoc.phone as string) === phone) {
+            migrated = oldDoc
+            void deleteDocById('drivers', oldCode)
+          }
+        }
+      }
+      const src = ownDoc ?? migrated
       const base = state.driver
       const driver: DriverProfile = {
         ...defaultDriver(),
-        ...(ownDoc
+        ...(src
           ? {
-              ratingAvg: (ownDoc.ratingAvg as number) ?? 0,
-              ratingCount: (ownDoc.ratingCount as number) ?? 0,
-              debt: (ownDoc.debt as number) ?? 0,
-              balance: (ownDoc.balance as number) ?? 0,
-              totalPaid: (ownDoc.totalPaid as number) ?? 0,
-              photoUrl: (ownDoc.photoUrl as string | null) ?? null,
-              createdAt: (ownDoc.createdAt as number) ?? Date.now(),
+              ratingAvg: (src.ratingAvg as number) ?? 0,
+              ratingCount: (src.ratingCount as number) ?? 0,
+              debt: (src.debt as number) ?? 0,
+              balance: (src.balance as number) ?? 0,
+              totalPaid: (src.totalPaid as number) ?? 0,
+              photoUrl: (src.photoUrl as string | null) ?? null,
+              createdAt: (src.createdAt as number) ?? Date.now(),
             }
           : { createdAt: Date.now() }),
-        name: base.name || (ownDoc?.name as string) || '',
+        name: base.name || (src?.name as string) || '',
         phone,
         code,
-        plate: base.plate || (ownDoc?.plate as string) || '',
-        color: base.color || (ownDoc?.color as string) || '',
-        model: base.model || (ownDoc?.model as string) || '',
-        idCardUrl: base.idCardUrl ?? (ownDoc?.idCardUrl as string | null) ?? null,
+        plate: base.plate || (src?.plate as string) || '',
+        color: base.color || (src?.color as string) || '',
+        model: base.model || (src?.model as string) || '',
+        idCardUrl: base.idCardUrl ?? (src?.idCardUrl as string | null) ?? null,
         idCardStatus:
           base.idCardStatus !== 'none'
             ? base.idCardStatus
-            : ((ownDoc?.idCardStatus as DriverProfile['idCardStatus']) ?? 'none'),
+            : ((src?.idCardStatus as DriverProfile['idCardStatus']) ?? 'none'),
       }
       update({ driver })
       void saveDoc('drivers', driver.code, driver as unknown as Record<string, unknown>)
@@ -1143,6 +1398,10 @@ export default function App() {
 
   // ---- المحفظة ----
   async function submitPayment() {
+    // (v48) زرار التحويل بيتقفل أثناء الرفع — ضغطة مزدوجة كانت بتعمل
+    // طلبين بنفس المبلغ والصورة، ولو الأدمن وافق على الاتنين المبلغ
+    // بيتضاف مرتين لمحفظة السواق.
+    if (payBusy) return
     const amount = parseFloat(payAmount)
     if (!amount || amount <= 0) {
       showNotice('اكتب مبلغ التحويل.')
@@ -1152,31 +1411,38 @@ export default function App() {
       showNotice('ارفع صورة التحويل — إلزامية.')
       return
     }
-    // الصورة بتتضغط محلياً وتتخزن Base64 داخل مستند Firestore — بدون Storage.
-    let url: string
+    setPayBusy(true)
     try {
-      url = await uploadImageAsDataUrl(payShot)
-    } catch (e) {
-      showNotice(e instanceof Error ? e.message : 'مقدرناش نجهّز صورة التحويل.')
-      return
+      // الصورة بتتضغط محلياً وتتخزن Base64 داخل مستند Firestore — بدون Storage.
+      let url: string
+      try {
+        url = await uploadImageAsDataUrl(payShot)
+      } catch (e) {
+        showNotice(e instanceof Error ? e.message : 'مقدرناش نجهّز صورة التحويل.')
+        return
+      }
+      // (v48) معرّف فريد فعلاً — PAY-Date.now() بس كان ممكن يتكرر
+      // لو ضغطتين وقعوا في نفس الملي ثانية فيضيع طلب.
+      const payment = {
+        id: `PAY-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        driverCode: state.driver.code,
+        driverName: state.driver.name || 'الكابتن',
+        amount,
+        screenshotUrl: url,
+        status: 'pending' as const,
+        createdAt: Date.now(),
+      }
+      update({ payments: [...state.payments, payment] })
+      void saveDoc('payments', payment.id, payment as unknown as Record<string, unknown>)
+      setPayAmount('')
+      setPayShot(null)
+      showNotice('طلبك اتبعت للإدارة للمراجعة.')
+    } finally {
+      setPayBusy(false)
     }
-    const payment = {
-      id: `PAY-${Date.now()}`,
-      driverCode: state.driver.code,
-      driverName: state.driver.name || 'الكابتن',
-      amount,
-      screenshotUrl: url,
-      status: 'pending' as const,
-      createdAt: Date.now(),
-    }
-    update({ payments: [...state.payments, payment] })
-    void saveDoc('payments', payment.id, payment as unknown as Record<string, unknown>)
-    setPayAmount('')
-    setPayShot(null)
-    showNotice('طلبك اتبعت للإدارة للمراجعة.')
   }
 
-  function reviewPayment(id: string, approve: boolean) {
+  async function reviewPayment(id: string, approve: boolean) {
     const payment = state.payments.find((p) => p.id === id)
     if (!payment) return
     // الطلب اللي اتراجع قبل كده مينفعش يتراجع تاني — الموافقة مرتين كانت بتخصم مرتين
@@ -1184,35 +1450,39 @@ export default function App() {
       showNotice('الطلب ده اتراجع قبل كده.')
       return
     }
-    const updatedPayment = { ...payment, status: (approve ? 'approved' : 'rejected') as 'approved' | 'rejected' }
-    update({ payments: state.payments.map((p) => (p.id === id ? updatedPayment : p)) })
-    void saveDoc('payments', id, updatedPayment as unknown as Record<string, unknown>)
     if (!approve) {
+      // الرفض: بنتأكد من السيرفر طازج إن الطلب لسه pending قبل ما نرفضه
+      const fresh = await loadDoc('payments', id)
+      if (fresh && fresh.status !== 'pending') {
+        showNotice('الطلب ده اتراجع قبل كده.')
+        return
+      }
+      const updatedPayment = { ...payment, status: 'rejected' as const }
+      update({ payments: state.payments.map((p) => (p.id === id ? updatedPayment : p)) })
+      void saveDoc('payments', id, updatedPayment as unknown as Record<string, unknown>)
       showNotice('تم رفض الطلب.')
       return
     }
+    // (v48) الموافقة في معاملة ذرّية: الطلب لازم يكون لسه pending جوّه
+    // المعاملة نفسها — فاعتماد مرتين (جهازين أو ضغطتين) مستحيل، وخصم
+    // المديونية بيتحسب من أحدث قراءة على السيرفر.
+    const res = await approvePaymentTx(id)
+    if (!res.ok) {
+      showNotice(res.alreadyReviewed ? 'الطلب ده اتراجع قبل كده.' : 'مقدرناش نعتمد الطلب — تأكد من النت وحاول تاني.')
+      return
+    }
+    const updatedPayment = { ...payment, status: 'approved' as const }
+    update({ payments: state.payments.map((p) => (p.id === id ? updatedPayment : p)) })
+    if (state.driver.code === payment.driverCode && res.debt !== undefined && res.balance !== undefined && res.totalPaid !== undefined) {
+      update({ driver: { ...state.driver, debt: res.debt, balance: res.balance, totalPaid: res.totalPaid } })
+    }
     // خصم المديونية من مستند السواق نفسه على السيرفر — مش من مديونية جهاز الأدمن
     // المبلغ بيسدد المديونية الأول، وأي زيادة عنها بتتحفظ رصيد في محفظة السواق
-    void loadDoc('drivers', payment.driverCode).then((doc) => {
-      const curDebt = (doc?.debt as number) ?? 0
-      const curPaid = (doc?.totalPaid as number) ?? 0
-      const curBalance = (doc?.balance as number) ?? 0
-      const toDebt = Math.min(payment.amount, curDebt)
-      const remainder = Math.round((payment.amount - toDebt) * 100) / 100
-      const next = {
-        ...((doc ?? {}) as Record<string, unknown>),
-        debt: Math.round((curDebt - toDebt) * 100) / 100,
-        balance: Math.round((curBalance + remainder) * 100) / 100,
-        totalPaid: Math.round((curPaid + payment.amount) * 100) / 100,
-      }
-      void saveDoc('drivers', payment.driverCode, next)
-      if (state.driver.code === payment.driverCode) {
-        update({ driver: { ...state.driver, debt: next.debt as number, balance: next.balance as number, totalPaid: next.totalPaid as number } })
-      }
-      showNotice(remainder > 0
-        ? `تمت الموافقة — المديونية اتخصمت، والزيادة ${money(remainder)} بقت رصيد في محفظة السواق.`
-        : 'تمت الموافقة — المديونية اتخصمت فوراً.')
-    })
+    showNotice(
+      res.remainder !== undefined && res.remainder > 0
+        ? `تمت الموافقة — المديونية اتخصمت، والزيادة ${money(res.remainder)} بقت رصيد في محفظة السواق.`
+        : 'تمت الموافقة — المديونية اتخصمت فوراً.',
+    )
   }
 
   async function uploadIdCard() {
@@ -1227,7 +1497,12 @@ export default function App() {
     }
     const driver = { ...state.driver, idCardUrl: url, idCardStatus: 'pending' as const }
     update({ driver })
-    void saveDoc('drivers', driver.code, driver as unknown as Record<string, unknown>)
+    // (v48) حفظ الحقلين بس — قبل كده كان بيكتب كائن السواق كامل من حالة
+    // محلية قديمة، فيمسح تقييم/محفظة أحدث على السيرفر. ولو الكود المحلي
+    // مشتق من رقم تاني، متكتبش على السيرفر خالص.
+    if (driverCodeIsCurrent(driver)) {
+      void saveDoc('drivers', driver.code, { idCardUrl: url, idCardStatus: 'pending' })
+    }
     showNotice('صورة البطاقة اترفعت وبانتظار مراجعة الإدارة.')
   }
 
@@ -1245,12 +1520,15 @@ export default function App() {
     if (who === 'passenger' && state.passenger) {
       const passenger = { ...state.passenger, photoUrl: url }
       update({ passenger })
-      void saveDoc('passengers', passenger.phone, passenger)
+      void saveDoc('passengers', passenger.phone, { photoUrl: url })
       showNotice('صورتك اتحفظت وهتظهر للكابتن.')
     } else {
       const driver = { ...state.driver, photoUrl: url }
       update({ driver })
-      void saveDoc('drivers', driver.code, driver as unknown as Record<string, unknown>)
+      // (v48) حفظ الصورة بس + حارس الكود (نفس سبب رفع البطاقة).
+      if (driverCodeIsCurrent(driver)) {
+        void saveDoc('drivers', driver.code, { photoUrl: url })
+      }
       showNotice('صورتك اتحفظت وهتظهر للعميل.')
     }
     setProfilePhotoFile(null)
@@ -1279,6 +1557,11 @@ export default function App() {
   async function goOnlineToggle() {
     if (state.driver.online) {
       update({ driver: { ...state.driver, online: false } })
+      // (v48) حالة «متاح» بتتحفظ على السيرفر — قبل كده كانت محلية بس،
+      // فخريطة العملاء مكانش بيظهر عليها كباتن متاحين أبداً.
+      if (driverCodeIsCurrent(state.driver)) {
+        void saveDoc('drivers', state.driver.code, { online: false })
+      }
       return
     }
     try {
@@ -1292,6 +1575,13 @@ export default function App() {
           currentLng: pos.coords.longitude,
         },
       })
+      if (driverCodeIsCurrent(state.driver)) {
+        void saveDoc('drivers', state.driver.code, {
+          online: true,
+          currentLat: pos.coords.latitude,
+          currentLng: pos.coords.longitude,
+        })
+      }
     } catch {
       showNotice('لازم تشغّل الموقع (GPS) وتدّي التطبيق إذن الموقع — من غيره مش هتقدر تبقى متاح وتستقبل طلبات.')
     }
@@ -1830,7 +2120,7 @@ export default function App() {
       <input placeholder="المبلغ المحوّل (جنيه)" inputMode="numeric" value={payAmount} onChange={(e) => setPayAmount(e.target.value)} />
       <PhotoPicker onPick={setPayShot} label="اختار صورة التحويل" />
       <p>صورة التحويل بتتضغط تلقائياً قبل الإرسال (الحد حوالي 250 كيلوبايت).</p>
-      <button className="btn" onClick={submitPayment}>ابعت طلب التحويل + صورة التحويل</button>
+      <button className="btn" disabled={payBusy} onClick={submitPayment}>{payBusy ? 'بيتبعت…' : 'ابعت طلب التحويل + صورة التحويل'}</button>
       <h3><span className="icon-chip sm"><IconList /></span>طلباتي</h3>
       {state.payments.filter((p) => p.driverCode === state.driver.code).map((p) => (
         <div key={p.id} className="ride">{p.id} — {money(p.amount)} — {p.status === 'pending' ? 'بانتظار الإدارة' : p.status === 'approved' ? '✅ اتوافق عليه' : '❌ اترفض'}
@@ -1884,14 +2174,23 @@ export default function App() {
     showNotice(next ? 'الخدمة اشتغلت للركاب ✅ — الطلبات مفتوحة دلوقتي.' : 'وقّفنا الطلبات مؤقتاً — الركاب هيشوفوا رسالة الانتظار.')
   }
 
+  // (v48) حفظ رقم محفظة الأدمن على السيرفر — قبل كده كان محلي بس على
+  // جهاز صلاح، فالسواقين على موبايلاتهم كانوا بيشوفوا «لم يحددها الأدمن بعد».
+  function saveAdminWallet() {
+    const a = stateRef.current.admin
+    void saveAdminSettings({ walletNumber: a.walletNumber, walletName: a.walletName })
+    showNotice('رقم المحفظة اتحفظ — السواقين هيشوفوه على موبايلاتهم.')
+  }
+
   const adminView = (
     <div className="card">
       <h2><span className="icon-chip"><IconShield /></span>الإدارة — صلاح</h2>
       <h3><span className="icon-chip sm"><IconWallet /></span>رقم محفظتي</h3>
       <div className="grid">
-        <input placeholder="رقم المحفظة" value={state.admin.walletNumber} onChange={(e) => update({ admin: { ...state.admin, walletNumber: e.target.value } })} />
-        <input placeholder="الاسم على المحفظة" value={state.admin.walletName} onChange={(e) => update({ admin: { ...state.admin, walletName: e.target.value } })} />
+        <input placeholder="رقم المحفظة" value={state.admin.walletNumber} onChange={(e) => update({ admin: { ...state.admin, walletNumber: e.target.value } })} onBlur={saveAdminWallet} />
+        <input placeholder="الاسم على المحفظة" value={state.admin.walletName} onChange={(e) => update({ admin: { ...state.admin, walletName: e.target.value } })} onBlur={saveAdminWallet} />
       </div>
+      <button className="btn small" onClick={saveAdminWallet}><IconCheck /> حفظ رقم المحفظة</button>
       <h3><span className="icon-chip sm"><IconSettings /></span>تشغيل الخدمة للركاب 🚀</h3>
       <p className="muted">
         {launch.launched
@@ -2027,7 +2326,7 @@ export default function App() {
     </div>
   ) : null
   /** تحديث جوّه التطبيق من غير لينكات: يحمّل الـ APK ويفتح مثبّت أندرويد */
-  async function installUpdate(apkUrl: string) {
+  async function installUpdate(apkUrl: string, expectedSha256?: string) {
     if (updateBusy) return
     setUpdateBusy(true)
     setUpdateProgress(0)
@@ -2045,6 +2344,17 @@ export default function App() {
           directory: Directory.Cache,
           progress: true,
         })
+        // (v48) تحقق من سلامة الـ APK قبل التثبيت — لو الـ sha256 اللي في
+        // version.json مش مطابق للملف اللي اتحمّل، مفيش تثبيت (ممكن يكون
+        // ملف تالف أو متبدّل). لو version.json مفيهوش sha256، بنكمل زي قبل كده.
+        if (expectedSha256) {
+          const { data } = await Filesystem.readFile({ path: 'ind-toktok-update.apk', directory: Directory.Cache })
+          const actual = await sha256HexOfBase64(typeof data === 'string' ? data : '')
+          if (actual && actual.toLowerCase() !== expectedSha256.toLowerCase()) {
+            setUpdateError('الملف اللي اتحمّل مش سليم — جرّب «حدّث دلوقتي» تاني.')
+            return
+          }
+        }
         let filePath = result.path ?? ''
         if (!filePath.startsWith('/')) {
           const { uri } = await Filesystem.getUri({ path: 'ind-toktok-update.apk', directory: Directory.Cache })
@@ -2063,6 +2373,21 @@ export default function App() {
       setUpdateProgress(0)
     }
   }
+
+  /** SHA-256 لملف مقروء Base64 — null لو المتصفح مش بيدعم التشفير. */
+  async function sha256HexOfBase64(b64: string): Promise<string | null> {
+    try {
+      const subtle = (globalThis.crypto as Crypto | undefined)?.subtle
+      if (!subtle) return null
+      const bin = atob(b64)
+      const bytes = new Uint8Array(bin.length)
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+      const hash = await subtle.digest('SHA-256', bytes)
+      return [...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, '0')).join('')
+    } catch {
+      return null
+    }
+  }
   // مودال التحديث — بيظهر لما يكون فيه إصدار أحدث (قابل للتجاهل، مش إجباري)
   const dismissUpdate = () => {
     if (availableUpdate) localStorage.setItem('indtoktok-update-dismissed', String(availableUpdate.version))
@@ -2075,7 +2400,7 @@ export default function App() {
         <p>في إصدار جديد من ind toktok (v{availableUpdate.version}) — حدّث التطبيق عشان تشوف آخر المميزات والتحسينات.</p>
         {updateError && <p className="muted">{updateError}</p>}
         <div className="row">
-          <button className="btn" disabled={updateBusy} onClick={() => installUpdate(availableUpdate.apkUrl)}>{updateBusy ? (updateProgress > 0 ? `بيحمّل التحديث… ${updateProgress}%` : 'بيحمّل التحديث…') : 'حدّث دلوقتي ⬇'}</button>
+          <button className="btn" disabled={updateBusy} onClick={() => installUpdate(availableUpdate.apkUrl, availableUpdate.sha256)}>{updateBusy ? (updateProgress > 0 ? `بيحمّل التحديث… ${updateProgress}%` : 'بيحمّل التحديث…') : 'حدّث دلوقتي ⬇'}</button>
           <button className="btn small" onClick={dismissUpdate}>بعدين</button>
         </div>
       </div>
@@ -2170,13 +2495,14 @@ export default function App() {
       {role === 'trips' && driverTripsView}
       {role === 'wallet' && walletView}
       {role === 'profile' && (appRole === 'driver' ? driverProfileView : passengerProfileView)}
-      {role === 'admin' && (<><button className="btn small" onClick={() => setRole('driver')}><IconBack /> رجوع للسواق</button>{adminView}</>)}
+      {role === 'admin' && isAdmin && (<><button className="btn small" onClick={() => setRole('driver')}><IconBack /> رجوع للسواق</button>{adminView}</>)}
+      {role === 'admin' && !isAdmin && driverView}
       <footer className="footer">
         <p>آخر رحلة: {lastRide ? `${lastRide.orderNo} — ${lastRide.status}` : 'لسه مفيش رحلات'}</p>
         {appRole === 'passenger' && <button className="btn small" onClick={() => chooseRole('driver')}><IconDriver /> أنا كابتن — دخول السواقين</button>}
         {appRole === 'driver' && (
           <div className="footer-links">
-            <button className="btn small" onClick={() => setRole('admin')}><IconShield /> الإدارة</button>
+            {isAdmin && <button className="btn small" onClick={() => setRole('admin')}><IconShield /> الإدارة</button>}
             <button className="btn small soft" onClick={() => chooseRole('passenger')}><IconSwap /> تبديل — أنا راكب</button>
           </div>
         )}

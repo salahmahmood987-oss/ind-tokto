@@ -315,13 +315,13 @@ export async function sendOtpCode(phone: string): Promise<OtpSendResult> {
   const unlimited = UNLIMITED_NUMBERS.has(e164)
   const now = Date.now()
   const records = load()
-  const rec = records[phone] || { requests: [] }
+  const rec = records[e164] || { requests: [] }
   const recent = pruneRequests(rec.requests, now)
   if (!unlimited && recent.length >= OTP_MAX_PER_HOUR) {
     const oldest = Math.min(...recent)
     const waitMs = 60 * 60 * 1000 - (now - oldest)
     const waitMinutes = Math.max(1, Math.ceil(waitMs / 60000))
-    records[phone] = { requests: recent }
+    records[e164] = { requests: recent }
     save(records)
     return {
       ok: false,
@@ -346,7 +346,7 @@ export async function sendOtpCode(phone: string): Promise<OtpSendResult> {
       }
     }
     if (!unlimited) {
-      records[phone] = { requests: [...recent, now] }
+      records[e164] = { requests: [...recent, now] }
       save(records)
     }
     const remaining = unlimited ? -1 : OTP_MAX_PER_HOUR - recent.length - 1
@@ -401,7 +401,7 @@ export async function sendOtpCode(phone: string): Promise<OtpSendResult> {
     }
     // سجّل الطلب بعد الإرسال الناجح بس (مش على الفشل) — أرقام صلاح مبتتحسبش
     if (!unlimited) {
-      records[phone] = { requests: [...recent, now] }
+      records[e164] = { requests: [...recent, now] }
       save(records)
     }
     const remaining = unlimited ? -1 : OTP_MAX_PER_HOUR - recent.length - 1
@@ -444,7 +444,7 @@ export async function sendOtpCode(phone: string): Promise<OtpSendResult> {
 
     // سجّل الطلب بعد الإرسال الناجح بس (مش على الفشل) — أرقام صلاح مبتتحسبش
     if (!unlimited) {
-      records[phone] = { requests: [...recent, now] }
+      records[e164] = { requests: [...recent, now] }
       save(records)
     }
     const remaining = unlimited ? -1 : OTP_MAX_PER_HOUR - recent.length - 1
@@ -560,7 +560,10 @@ export async function verifyOtpCode(
 
 /** كم طلب كود فاضل للرقم ده في الساعة الحالية؟ */
 export function otpRemaining(phone: string): number {
-  const rec = load()[phone.trim()]
+  // (v48: المفتاح هو الرقم المطبَّع E.164 — قبل كده نفس الرقم بصيغ مختلفة
+  // 0155/+20155 كان بياخد 3 محاولات لكل صيغة)
+  const key = toE164Phone(phone) ?? phone.trim()
+  const rec = load()[key]
   if (!rec) return OTP_MAX_PER_HOUR
   return Math.max(
     0,
