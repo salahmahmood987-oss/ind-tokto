@@ -109,7 +109,10 @@ export async function deleteDocById(collectionName: string, id: string): Promise
 
 /**
  * رقم طلب فريد من السيرفر (v48): عدّاد ذرّي في settings/counters.rideSeq —
- * كل رحلة بتاخد #1001 ثم #1002... من غير تصادم بين الركاب.
+ * كل رحلة بتاخد رقم جديد من غير تصادم بين الركاب.
+ * (البداية #10001 مش #1001: أرقام #1001-#1009 موجودة أصلاً كمستندات
+ * رحلات تجريبية من زمن العدّاد المحلي — لو بدأنا من #1001 أول رحلة
+ * حقيقية كانت هتكتب فوق رحلة تجريبية قديمة بنفس الرقم.)
  * لو مفيش نت (أوفلاين) يرجع رقم مؤقت فريد `#T<وقت>` — مش هيتصادم مع حد.
  */
 export async function nextOrderNumber(): Promise<string> {
@@ -123,7 +126,7 @@ export async function nextOrderNumber(): Promise<string> {
       tx.set(ref, { rideSeq: increment(1) }, { merge: true })
       return cur + 1
     })
-    return `#${1000 + n}`
+    return `#${10000 + n}`
   } catch (e) {
     reportError('رقم الطلب', e)
     return `#T${Date.now()}`
