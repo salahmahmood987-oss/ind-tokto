@@ -42,6 +42,13 @@ export function clientCodeForPhone(phone: string): string {
   return stableCode('C', phone)
 }
 
+/** كود سواق ثابت لنفس رقم الموبايل — كل سواق ليه كود مختلف.
+ *  (v47: قبل كده كل سواق جديد كان بياخد D-1001، فكل السواقين كانوا
+ *  بيكتبوا في نفس مستند Firestore وبيورثوا تقييم ومحفظة بعض) */
+export function driverCodeForPhone(phone: string): string {
+  return stableCode('D', phone)
+}
+
 export function defaultDriver(): DriverProfile {
   return {
     name: '',

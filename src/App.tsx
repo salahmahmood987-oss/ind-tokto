@@ -14,7 +14,9 @@ import { sendOtpCode, verifyOtpCode } from './otp'
 import {
   clientCodeForPhone,
   commissionFor,
+  defaultDriver,
   defaultState,
+  driverCodeForPhone,
   isDebtBlocked,
   loadState,
   saveState,
@@ -26,7 +28,7 @@ import {
   MAX_DEBT_EGP,
   OTP_MAX_PER_HOUR,
 } from './types'
-import type { LatLng, LaunchSettings, Offer, PaymentRequest, Ride, Role } from './types'
+import type { DriverProfile, LatLng, LaunchSettings, Offer, PaymentRequest, Ride, Role } from './types'
 
 function stars(value: number, onRate?: (n: number) => void) {
   return (
@@ -656,6 +658,15 @@ export default function App() {
     void loadDoc('drivers', code).then((doc) => {
       if (cancelled || !doc) return
       const cur = stateRef.current.driver
+      // v47: المستند ده لو بتاع رقم تاني (سواق تاني)، متسحبش منه حاجة —
+      // ولو جهازي شايل بياناته من قبل كده، صفّرها محلياً بس (من غير ما أمسح السيرفر).
+      const docPhone = doc.phone as string | undefined
+      if (docPhone && cur.phone && docPhone !== cur.phone) {
+        update({ driver: { ...cur, ratingAvg: 0, ratingCount: 0, debt: 0, balance: 0, totalPaid: 0, photoUrl: null } })
+        return
+      }
+      // لسه مسجلتش برقم — متسحبش بيانات أي ملف قبل ما الرقم يتأكد
+      if (!cur.phone) return
       update({
         driver: {
           ...cur,
@@ -1075,7 +1086,38 @@ export default function App() {
       void saveDoc('passengers', phone, profile)
       showNotice(`أهلاً ${profile.name}! رقمك اتأكد وكودك ${profile.code}.`)
     } else {
-      const driver = { ...state.driver, phone, createdAt: state.driver.createdAt || Date.now() }
+      // v47: كود فريد ثابت من رقم الموبايل — قبل كده كل سواق جديد كان
+      // بياخد D-1001 وبيورث تقييم ومحفظة وصورة أي سواق اتسجل قبله.
+      const code = driverCodeForPhone(phone)
+      // لو السواق ده مسجل قبل كده بنفس الرقم (إعادة تثبيت)، رجّع ملفه هو بس
+      const server = await loadDoc('drivers', code)
+      const ownDoc = server && (server.phone as string) === phone ? server : null
+      const base = state.driver
+      const driver: DriverProfile = {
+        ...defaultDriver(),
+        ...(ownDoc
+          ? {
+              ratingAvg: (ownDoc.ratingAvg as number) ?? 0,
+              ratingCount: (ownDoc.ratingCount as number) ?? 0,
+              debt: (ownDoc.debt as number) ?? 0,
+              balance: (ownDoc.balance as number) ?? 0,
+              totalPaid: (ownDoc.totalPaid as number) ?? 0,
+              photoUrl: (ownDoc.photoUrl as string | null) ?? null,
+              createdAt: (ownDoc.createdAt as number) ?? Date.now(),
+            }
+          : { createdAt: Date.now() }),
+        name: base.name || (ownDoc?.name as string) || '',
+        phone,
+        code,
+        plate: base.plate || (ownDoc?.plate as string) || '',
+        color: base.color || (ownDoc?.color as string) || '',
+        model: base.model || (ownDoc?.model as string) || '',
+        idCardUrl: base.idCardUrl ?? (ownDoc?.idCardUrl as string | null) ?? null,
+        idCardStatus:
+          base.idCardStatus !== 'none'
+            ? base.idCardStatus
+            : ((ownDoc?.idCardStatus as DriverProfile['idCardStatus']) ?? 'none'),
+      }
       update({ driver })
       void saveDoc('drivers', driver.code, driver as unknown as Record<string, unknown>)
       showNotice('رقمك اتأكد — أهلاً بيك يا كابتن!')
@@ -1916,6 +1958,7 @@ export default function App() {
           <br />★ {d.ratingAvg} ({d.ratingCount} تقييم) — {d.plate} {d.model} {d.color}
           <br />مديونية: {money(d.debt)} — رصيد: {money(d.balance)} — إجمالي المسدد: {money(d.totalPaid)}
           <br />البطاقة: {idCardStatusLabel(d.idCardStatus)} — سجّل: {d.createdAt ? fmtTime(d.createdAt) : 'قبل v30 — التاريخ مش معروف'}
+          <br /><button className="btn small" onClick={() => { if (confirm(`تصفّر التقييم والمحفظة للسواق ${d.name} (${d.code})؟ الصورة والبطاقة وبياناته هيفضلوا زي ما هم.`)) void saveDoc('drivers', d.code, { ratingAvg: 0, ratingCount: 0, debt: 0, balance: 0, totalPaid: 0 }) }}>تصفير التقييم والمحفظة</button>
           {d.idCardUrl && <img src={d.idCardUrl} alt="بطاقة السواق" className="shot" />}
         </div>
       ))}
