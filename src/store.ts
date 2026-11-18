@@ -5,6 +5,7 @@ import type {
   PassengerProfile,
   PaymentRequest,
   Ride,
+  SupportChat,
   WaitlistEntry,
 } from './types'
 import { COMMISSION_RATE } from './types'
@@ -22,6 +23,8 @@ export interface AppState {
   waitlist: WaitlistEntry[]
   /** قايمة انتظار الإطلاق (v44) — عملاء سابوا أرقامهم عشان نبلغهم لما الخدمة تشتغل (للإدارة فقط) */
   launchWaitlist: LaunchWaitlistEntry[]
+  /** محادثات الدعم (v50) — للإدارة فقط: كل محادثات العملاء والسواقين */
+  supportChats: SupportChat[]
   admin: AdminSettings
   /** آخر رقم طلب مستخدم — حقل قديم (محلي فقط). رقم الطلب بقى من عدّاد
    *  السيرفر (nextOrderNumber في firebaseDb) من v48 — كل راكب أول رحلة
@@ -92,6 +95,7 @@ export function defaultState(): AppState {
     passengers: [],
     waitlist: [],
     launchWaitlist: [],
+    supportChats: [],
     admin: { walletNumber: '', walletName: '' },
     lastOrderNum: 1000,
     lastDriverNum: 1001,

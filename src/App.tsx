@@ -5,10 +5,10 @@ import { Directory, Filesystem } from '@capacitor/filesystem'
 import { FileOpener } from '@capacitor-community/file-opener'
 import MapView from './MapView'
 import type { MapMode } from './MapView'
-import { IconBack, IconBell, IconCheck, IconDriver, IconEdit, IconHistory, IconList, IconNav, IconPhone, IconPin, IconSettings, IconShield, IconSwap, IconTrash, IconUser, IconWallet } from './icons'
+import { IconBack, IconBell, IconChat, IconCheck, IconDriver, IconEdit, IconHistory, IconList, IconNav, IconPhone, IconPin, IconSettings, IconShield, IconSwap, IconTrash, IconUser, IconWallet } from './icons'
 import logoUrl from './assets/icon-1024.png'
 import { APP_VERSION, VERSION_URL } from './version'
-import { approvePaymentTx, applyCommissionTx, applyRatingTx, deleteDocById, firebaseEnabled, loadAdminSettings, loadDoc, loadLaunch, nextOrderNumber, saveAdminSettings, subscribeDrivers, subscribeLaunchWaitlist, subscribePassengers, subscribePayments, subscribeRides, subscribeWaitlist, uploadImageAsDataUrl, saveDoc } from './firebaseDb'
+import { approvePaymentTx, applyCommissionTx, applyRatingTx, deleteDocById, firebaseEnabled, loadAdminSettings, loadDoc, loadLaunch, nextOrderNumber, saveAdminSettings, sendSupportMessage, subscribeDrivers, subscribeLaunchWaitlist, subscribePassengers, subscribePayments, subscribeRides, subscribeSupportChat, subscribeSupportChats, subscribeWaitlist, uploadImageAsDataUrl, saveDoc } from './firebaseDb'
 import { getFirebaseAuth } from './firebaseApp'
 import { where } from 'firebase/firestore'
 import { isInServiceArea, isInServiceBBox, OUT_OF_AREA_MESSAGE, OUT_OF_AREA_TITLE } from './geo'
@@ -31,7 +31,7 @@ import {
   MAX_DEBT_EGP,
   OTP_MAX_PER_HOUR,
 } from './types'
-import type { DriverProfile, LatLng, LaunchSettings, Offer, PaymentRequest, Ride, Role } from './types'
+import type { DriverProfile, LatLng, LaunchSettings, Offer, PaymentRequest, Ride, Role, SupportChat } from './types'
 
 function stars(value: number, onRate?: (n: number) => void) {
   return (
@@ -459,6 +459,16 @@ export default function App() {
   // تكبير الصور (بطاقة/تحويل) بملء الشاشة (v49): الأدمن مكنش يقدر يفتح
   // صورة البطاقة أصلاً — كانت صورة مصغّرة من غير أي إجراء عند الضغط عليها
   const [lightbox, setLightbox] = useState<string | null>(null)
+  // شات الدعم (v50): محادثتي أنا (راكب/كابتن) + مسودة رسالتي
+  const [mySupportChat, setMySupportChat] = useState<SupportChat | null>(null)
+  const [supportDraft, setSupportDraft] = useState('')
+  const [supportBusy, setSupportBusy] = useState(false)
+  // شات الدعم عند الأدمن: رقم المحادثة المفتوحة + مسودة الرد
+  const [adminSupportPhone, setAdminSupportPhone] = useState<string | null>(null)
+  const [adminSupportDraft, setAdminSupportDraft] = useState('')
+  const [adminSupportBusy, setAdminSupportBusy] = useState(false)
+  const supportListRef = useRef<HTMLDivElement | null>(null)
+  const adminSupportListRef = useRef<HTMLDivElement | null>(null)
   const [idCardFile, setIdCardFile] = useState<File | null>(null)
   // التقييم
   const [rateDriver, setRateDriver] = useState(0)
@@ -500,6 +510,13 @@ export default function App() {
   // (v48) آخر رحلة بتاعتي أنا بس (كعميل أو كسواق) — قبل كده التذييل كان
   // بيعرض رقم وآخر حالة لرحلة شخص تاني.
   const lastRide = myPassengerRides[0] ?? myPastRides[0] ?? undefined
+  // (v50) شات الدعم: رقمي E.164 هو مفتاح محادثتي، واسمي من ملفي
+  const mySupportPhone = toE164Phone(appRole === 'passenger' ? (state.passenger?.phone ?? '') : (state.driver.phone ?? '')) ?? ''
+  const mySupportName = appRole === 'passenger' ? (state.passenger?.name ?? 'عميل') : (state.driver.name || 'كابتن')
+  // فيه رد جديد من الدعم مستنيني أشوفه؟ (آخر رد أحدث من آخر رسالة بعتها)
+  const hasSupportReply = !!mySupportChat?.lastReplyAt && (!mySupportChat.lastCustomerAt || mySupportChat.lastReplyAt > mySupportChat.lastCustomerAt)
+  // المحادثة المفتوحة عند الأدمن — من القايمة المتزامنة حياً (مش اشتراك تاني)
+  const adminSupportChat = state.supportChats.find((c) => c.phone === adminSupportPhone) ?? null
 
   // ---- طلب إذن الموقع فور فتح التطبيق ----
   // أول ما التطبيق يفتح نطلب إذن الموقع من النظام، ولو اتوافق عليه
@@ -702,6 +719,38 @@ export default function App() {
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [firebaseEnabled, isAdmin])
+  // (v50) مزامنة حية لمحادثة الدعم بتاعتي — الرد من الدعم أو الأدمن
+  // يوصل فوراً لشاشة الشات، من غير تحديث يدوي. العميل/الكابتن بيشوف
+  // محادثته هو بس (الاشتراك على مستند رقمه بس).
+  useEffect(() => {
+    if (!firebaseEnabled || !mySupportPhone || appRole === null || !verifiedPhones[appRole]) {
+      setMySupportChat(null)
+      return undefined
+    }
+    return subscribeSupportChat(mySupportPhone, setMySupportChat)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [firebaseEnabled, mySupportPhone, appRole, verifiedPhones])
+  // (v50) مزامنة حية لكل محادثات الدعم — للإدارة بس
+  useEffect(() => {
+    if (!firebaseEnabled) return undefined
+    if (!isAdmin) {
+      setState((s) => (s.supportChats.length ? { ...s, supportChats: [] } : s))
+      return undefined
+    }
+    return subscribeSupportChats((remote) => {
+      setState((s) => ({ ...s, supportChats: remote }))
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [firebaseEnabled, isAdmin])
+  // (v50) نزول تلقائي لآخر رسالة في شات الدعم لما توصل رسالة جديدة
+  useEffect(() => {
+    const el = supportListRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [mySupportChat?.messages.length])
+  useEffect(() => {
+    const el = adminSupportListRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [adminSupportChat?.messages.length])
   // فحص التحديثات عند الفتح: لو فيه إصدار أحدث على الريبو يظهر تنبيه جوّه التطبيق
   useEffect(() => {
     let cancelled = false
@@ -2279,6 +2328,67 @@ export default function App() {
     showNotice('رقم المحفظة اتحفظ — السواقين هيشوفوه على موبايلاتهم.')
   }
 
+  /** يبعت رسالتي في شات الدعم (v50) — من رقمي ودوري واسمي. */
+  async function sendMySupportMessage() {
+    const text = supportDraft.trim()
+    if (!text || supportBusy || !mySupportPhone || appRole === null) return
+    setSupportBusy(true)
+    const ok = await sendSupportMessage({ phone: mySupportPhone, role: appRole, name: mySupportName, sender: 'customer', text })
+    setSupportBusy(false)
+    if (!ok) {
+      showNotice('مقدرناش نبعت رسالتك — اتأكد من النت وحاول تاني.')
+      return
+    }
+    setSupportDraft('')
+  }
+
+  /** يبعت رد الأدمن في المحادثة المفتوحة (v50). */
+  async function sendAdminSupportReply() {
+    const text = adminSupportDraft.trim()
+    const chat = adminSupportChat
+    if (!text || adminSupportBusy || !chat) return
+    setAdminSupportBusy(true)
+    const ok = await sendSupportMessage({ phone: chat.phone, role: chat.role, name: chat.name, sender: 'admin', text })
+    setAdminSupportBusy(false)
+    if (!ok) {
+      showNotice('مقدرناش نبعت الرد — اتأكد من النت وحاول تاني.')
+      return
+    }
+    setAdminSupportDraft('')
+  }
+
+  // شات الدعم (v50) — محادثة واحدة برقمك، والرد من الدعم بيوصلك لحظياً
+  const supportView = (
+    <div className="card">
+      <h2><span className="icon-chip"><IconChat /></span>الدعم 💬</h2>
+      <p className="muted">اكتب سؤالك أو مشكلتك وهنرد عليك في أقرب وقت — الرد بيوصلك هنا على طول.</p>
+      <div className="chat-list" ref={supportListRef}>
+        {(!mySupportChat || mySupportChat.messages.length === 0) && (
+          <p className="muted">لسه مفيش رسايل — ابعت أول رسالة تحت 👇</p>
+        )}
+        {(mySupportChat?.messages ?? []).map((m, i) => (
+          <div key={`${m.createdAt}-${i}`} className={`chat-msg ${m.sender === 'customer' ? 'mine' : 'theirs'}`}>
+            <div className="chat-sender">{m.sender === 'customer' ? 'أنت' : m.sender === 'admin' ? 'الإدارة' : 'الدعم'}</div>
+            <div>{m.text}</div>
+            {m.createdAt && <div className="chat-time">{fmtTime(Date.parse(m.createdAt))}</div>}
+          </div>
+        ))}
+      </div>
+      <div className="row">
+        <input
+          placeholder="اكتب رسالتك هنا…"
+          value={supportDraft}
+          onChange={(e) => setSupportDraft(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') void sendMySupportMessage() }}
+          style={{ flex: 1 }}
+        />
+        <button className="btn" disabled={!supportDraft.trim() || supportBusy} onClick={() => void sendMySupportMessage()}>
+          {supportBusy ? 'بيتبعت…' : 'ابعت 📩'}
+        </button>
+      </div>
+    </div>
+  )
+
   const adminView = (
     <div className="card">
       <h2><span className="icon-chip"><IconShield /></span>الإدارة — صلاح</h2>
@@ -2374,6 +2484,53 @@ export default function App() {
           <br />سجّل: {w.createdAt ? fmtTime(w.createdAt) : '—'}
         </div>
       ))}
+      <h3><span className="icon-chip sm"><IconChat /></span>الدعم 💬</h3>
+      <p className="muted">محادثات العملاء والسواقين — {state.supportChats.length} محادثة. اللي عليها 🔴 فيها رسالة جديدة مستنية رد.</p>
+      {state.supportChats.length === 0 && <p>مفيش محادثات دعم لسه.</p>}
+      {[...state.supportChats]
+        .sort((a, b) => (b.lastCustomerAt ?? '').localeCompare(a.lastCustomerAt ?? ''))
+        .map((c) => {
+          const unread = !!c.lastCustomerAt && (!c.lastReplyAt || c.lastCustomerAt > c.lastReplyAt)
+          const last = c.messages[c.messages.length - 1]
+          return (
+            <div key={c.phone} className={`ride${unread ? ' chat-unread' : ''}`} onClick={() => { setAdminSupportPhone(c.phone); setAdminSupportDraft('') }} style={{ cursor: 'pointer' }}>
+              <b>{c.name || 'بدون اسم'}</b> {c.role === 'driver' ? '🛺 كابتن' : '👤 راكب'} — <a className="phone-chip" href={`tel:${c.phone}`} onClick={(e) => e.stopPropagation()}><IconPhone /> {c.phone}</a>
+              {unread && <span> 🔴 رسالة جديدة</span>}
+              {c.needsAdmin && <span> ⚠️ محتاجة تدخلك</span>}
+              <br /><span className="muted">{last ? `${last.sender === 'customer' ? (c.role === 'driver' ? 'الكابتن' : 'العميل') : last.sender === 'admin' ? 'أنت' : 'الدعم'}: ${last.text.slice(0, 80)}` : 'لسه مفيش رسايل'}</span>
+            </div>
+          )
+        })}
+      {adminSupportPhone && adminSupportChat && (
+        <div className="box">
+          <div className="row">
+            <b>محادثة {adminSupportChat.name || adminSupportChat.phone} — {adminSupportChat.role === 'driver' ? '🛺 كابتن' : '👤 راكب'}</b>
+            <button className="btn small soft" onClick={() => setAdminSupportPhone(null)}>✕ قفل المحادثة</button>
+          </div>
+          <div className="chat-list" ref={adminSupportListRef}>
+            {adminSupportChat.messages.length === 0 && <p className="muted">لسه مفيش رسايل في المحادثة دي.</p>}
+            {adminSupportChat.messages.map((m, i) => (
+              <div key={`${m.createdAt}-${i}`} className={`chat-msg ${m.sender === 'admin' ? 'mine' : 'theirs'}`}>
+                <div className="chat-sender">{m.sender === 'customer' ? (adminSupportChat.role === 'driver' ? 'الكابتن' : 'العميل') : m.sender === 'admin' ? 'أنت' : 'الدعم'}</div>
+                <div>{m.text}</div>
+                {m.createdAt && <div className="chat-time">{fmtTime(Date.parse(m.createdAt))}</div>}
+              </div>
+            ))}
+          </div>
+          <div className="row">
+            <input
+              placeholder="اكتب ردك هنا…"
+              value={adminSupportDraft}
+              onChange={(e) => setAdminSupportDraft(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') void sendAdminSupportReply() }}
+              style={{ flex: 1 }}
+            />
+            <button className="btn" disabled={!adminSupportDraft.trim() || adminSupportBusy} onClick={() => void sendAdminSupportReply()}>
+              {adminSupportBusy ? 'بيتبعت…' : 'ابعت الرد 📩'}
+            </button>
+          </div>
+        </div>
+      )}
       <h3><span className="icon-chip sm"><IconList /></span>كل الرحلات</h3>
       <input placeholder="🔍 ابحث برقم الطلب أو الكود أو الاسم أو الرقم…" value={search} onChange={(e) => setSearch(e.target.value)} />
       {filteredRides.map((r) => (
@@ -2581,6 +2738,7 @@ export default function App() {
         <nav className="tabs">
           <button className={role === 'passenger' ? 'tab active' : 'tab'} onClick={() => setRole('passenger')}><IconPin />اطلب توكتوك</button>
           <button className={role === 'myRequests' ? 'tab active' : 'tab'} onClick={() => setRole('myRequests')}><IconList />طلباتي</button>
+          <button className={role === 'support' ? 'tab active' : 'tab'} onClick={() => setRole('support')}><IconChat />الدعم{hasSupportReply ? ' 🔴' : ''}</button>
           <button className={role === 'profile' ? 'tab active' : 'tab'} onClick={() => setRole('profile')}><IconUser />الملف الشخصي</button>
         </nav>
       )}
@@ -2589,6 +2747,7 @@ export default function App() {
           <button className={role === 'driver' ? 'tab active' : 'tab'} onClick={() => setRole('driver')}><IconList />الطلبات</button>
           <button className={role === 'trips' ? 'tab active' : 'tab'} onClick={() => setRole('trips')}><IconHistory />رحلاتي</button>
           <button className={role === 'wallet' ? 'tab active' : 'tab'} onClick={() => setRole('wallet')}><IconWallet />المحفظة</button>
+          <button className={role === 'support' ? 'tab active' : 'tab'} onClick={() => setRole('support')}><IconChat />الدعم{hasSupportReply ? ' 🔴' : ''}</button>
           <button className={role === 'profile' ? 'tab active' : 'tab'} onClick={() => setRole('profile')}><IconUser />الملف الشخصي</button>
         </nav>
       )}
@@ -2603,6 +2762,7 @@ export default function App() {
       {role === 'trips' && driverTripsView}
       {role === 'wallet' && walletView}
       {role === 'profile' && (appRole === 'driver' ? driverProfileView : passengerProfileView)}
+      {role === 'support' && supportView}
       {role === 'admin' && isAdmin && (<><button className="btn small" onClick={() => setRole('driver')}><IconBack /> رجوع للسواق</button>{adminView}</>)}
       {role === 'admin' && !isAdmin && driverView}
       <footer className="footer">

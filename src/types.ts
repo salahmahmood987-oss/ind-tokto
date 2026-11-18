@@ -4,7 +4,7 @@ export interface LatLng {
   label: string
 }
 
-export type Role = 'passenger' | 'driver' | 'wallet' | 'admin' | 'trips' | 'profile' | 'myRequests'
+export type Role = 'passenger' | 'driver' | 'wallet' | 'admin' | 'trips' | 'profile' | 'myRequests' | 'support'
 
 export interface PassengerProfile {
   name: string
@@ -158,6 +158,31 @@ export interface PaymentRequest {
 export interface AdminSettings {
   walletNumber: string
   walletName: string
+}
+
+/** رسالة واحدة في شات الدعم (v50) — الوقت ISO عشان يترتب صح من أي جهاز */
+export interface SupportMessage {
+  /** customer = المستخدم نفسه (راكب/كابتن)، agent = المساعد (زعتر)، admin = صلاح */
+  sender: 'customer' | 'agent' | 'admin'
+  text: string
+  createdAt: string
+}
+
+/** محادثة دعم واحدة لكل رقم موبايل (v50) — مستند supportChats/{phone}
+ *  (phone هو رقم الجلسة E.164). نفس السكيما في Top Service — شات الدعم
+ *  مشترك بين التطبيقين، والمساعد بيرد من Firestore على طول. */
+export interface SupportChat {
+  phone: string
+  app: 'ind-toktok'
+  role: 'passenger' | 'driver'
+  name: string
+  messages: SupportMessage[]
+  /** آخر مرة العميل/الكابتن بعت رسالة — null لو لسه مبعتش */
+  lastCustomerAt: string | null
+  /** آخر مرة الدعم رد — null لو لسه مفيش رد */
+  lastReplyAt: string | null
+  /** محتاجة تدخل صلاح بنفسه (بيعلّمها المساعد لما السؤال محتاج قراره) */
+  needsAdmin: boolean
 }
 
 export const COMMISSION_RATE = 0.05 // عمولة 5%

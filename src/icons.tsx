@@ -185,3 +185,13 @@ export function IconTrash(p: IconProps): JSX.Element {
     </Svg>
   )
 }
+
+/** شات دعم — فقاعة محادثة */
+export function IconChat(p: IconProps): JSX.Element {
+  return (
+    <Svg {...p}>
+      <path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5c-1.5 0-3-.4-4.2-1.1L3 20l1.1-5.3A8.5 8.5 0 1 1 21 11.5z" />
+      <path d="M8.5 11.5h.01M12 11.5h.01M15.5 11.5h.01" />
+    </Svg>
+  )
+}

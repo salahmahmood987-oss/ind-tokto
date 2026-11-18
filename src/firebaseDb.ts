@@ -32,13 +32,16 @@
 //    settings/launch      — (v44) launched + driversTarget: مفتاح تشغيل الخدمة للركاب
 //    launchWaitlist/{id}  — (v44) phone + name + createdAt: عملاء مستنيين الإطلاق
 //    waitlist/{id}        — عملاء برّه النطاق سابوا أرقامهم للتوسع
+//    supportChats/{phone} — (v50) شات دعم لكل رقم: messages[] + lastCustomerAt
+//                           + lastReplyAt + needsAdmin — المساعد (زعتر) بيرد
+//                           عليها من Firestore، والأدمن بيرد من لوحة الإدارة
 // ---------------------------------------------------------------------------
-import { collection, deleteDoc, doc, getDoc, getFirestore, increment, onSnapshot, query, runTransaction, setDoc } from 'firebase/firestore'
+import { arrayUnion, collection, deleteDoc, doc, getDoc, getFirestore, increment, onSnapshot, query, runTransaction, setDoc } from 'firebase/firestore'
 import type { Firestore, QueryConstraint } from 'firebase/firestore'
 import { isFirebaseConfigured } from './firebaseConfig'
 import { getFirebaseApp } from './firebaseApp'
 import { preparePhotoForFirestore } from './imageUpload'
-import type { DriverProfile, LaunchWaitlistEntry, PassengerProfile, PaymentRequest, Ride, WaitlistEntry } from './types'
+import type { DriverProfile, LaunchWaitlistEntry, PassengerProfile, PaymentRequest, Ride, SupportChat, SupportMessage, WaitlistEntry } from './types'
 
 export const firebaseEnabled = isFirebaseConfigured
 
@@ -530,5 +533,119 @@ export async function applyCommissionTx(
   } catch (e) {
     reportError('العمولة', e)
     return { ok: false }
+  }
+}
+
+// ---------------------------------------------------------------------------
+//  شات الدعم (v50) — محادثة واحدة لكل رقم موبايل في supportChats/{phone}.
+//  المساعد (زعتر) بيقرا المحادثات من Firestore وبيرد عليها من برّه التطبيق،
+//  والأدمن بيرد من لوحة الإدارة. العميل/الكابتن بيشوف محادثته هو بس.
+// ---------------------------------------------------------------------------
+
+/** يحوّل مستند محادثة دعم من Firestore لكائن SupportChat كامل. */
+function normalizeSupportChat(id: string, data: Record<string, unknown>): SupportChat {
+  const d = data as unknown as Partial<SupportChat>
+  const rawMsgs = Array.isArray(d.messages) ? d.messages : []
+  return {
+    phone: d.phone ?? id,
+    app: 'ind-toktok',
+    role: d.role === 'driver' ? 'driver' : 'passenger',
+    name: typeof d.name === 'string' ? d.name : '',
+    messages: rawMsgs
+      .filter((m): m is SupportMessage => !!m && typeof (m as SupportMessage).text === 'string')
+      .map((m) => ({
+        sender: m.sender === 'admin' ? 'admin' : m.sender === 'agent' ? 'agent' : 'customer',
+        text: m.text,
+        createdAt: typeof m.createdAt === 'string' ? m.createdAt : '',
+      })),
+    lastCustomerAt: typeof d.lastCustomerAt === 'string' ? d.lastCustomerAt : null,
+    lastReplyAt: typeof d.lastReplyAt === 'string' ? d.lastReplyAt : null,
+    needsAdmin: d.needsAdmin === true,
+  }
+}
+
+/**
+ * اشتراك حي في كل محادثات الدعم — للإدارة بس: أي رسالة جديدة من عميل
+ * أو كابتن تظهر فوراً في قسم الدعم عند الأدمن.
+ */
+export function subscribeSupportChats(cb: (chats: SupportChat[]) => void): () => void {
+  try {
+    const db = getDb()
+    if (!db) return () => {}
+    const unsub = onSnapshot(
+      collection(db, 'supportChats'),
+      (snap) => cb(snap.docs.map((d) => normalizeSupportChat(d.id, d.data() as Record<string, unknown>))),
+      (err) => reportError('مزامنة محادثات الدعم', err),
+    )
+    return () => unsub()
+  } catch (e) {
+    reportError('مزامنة محادثات الدعم', e)
+    return () => {}
+  }
+}
+
+/**
+ * اشتراك حي في محادثة دعم واحدة (بالرقم) — الرد من الدعم أو الأدمن
+ * يوصل فوراً لشاشة الشات عند العميل/الكابتن، من غير تحديث يدوي.
+ */
+export function subscribeSupportChat(phone: string, cb: (chat: SupportChat | null) => void): () => void {
+  try {
+    const db = getDb()
+    if (!db) return () => {}
+    const unsub = onSnapshot(
+      doc(db, 'supportChats', phone),
+      (snap) => cb(snap.exists() ? normalizeSupportChat(snap.id, snap.data() as Record<string, unknown>) : null),
+      (err) => reportError('مزامنة شات الدعم', err),
+    )
+    return () => unsub()
+  } catch (e) {
+    reportError('مزامنة شات الدعم', e)
+    return () => {}
+  }
+}
+
+/**
+ * يبعت رسالة دعم في معاملة ذرّية: لو المحادثة مش موجودة بتتإنشئ
+ * (أول رسالة)، ولو موجودة الرسالة بتتضاف بـ arrayUnion — فبعتتين
+ * متزامنتين من جهازين مبيضيّعوش بعض. بيرجع false لو مفيش إعداد
+ * Firebase أو فشل الإرسال (والواجهة بتقول للمستخدم يحاول تاني).
+ */
+export async function sendSupportMessage(input: {
+  phone: string
+  role: 'passenger' | 'driver'
+  name: string
+  sender: SupportMessage['sender']
+  text: string
+}): Promise<boolean> {
+  try {
+    const db = getDb()
+    if (!db) return false
+    const now = new Date().toISOString()
+    const msg: SupportMessage = { sender: input.sender, text: input.text, createdAt: now }
+    await runTransaction(db, async (tx) => {
+      const ref = doc(db, 'supportChats', input.phone)
+      const snap = await tx.get(ref)
+      if (!snap.exists()) {
+        tx.set(ref, {
+          phone: input.phone,
+          app: 'ind-toktok',
+          role: input.role,
+          name: input.name,
+          messages: [msg],
+          lastCustomerAt: input.sender === 'customer' ? now : null,
+          lastReplyAt: input.sender === 'customer' ? null : now,
+          needsAdmin: false,
+        })
+        return
+      }
+      const patch: Record<string, unknown> = { messages: arrayUnion(msg) }
+      if (input.sender === 'customer') patch.lastCustomerAt = now
+      else patch.lastReplyAt = now
+      tx.update(ref, patch)
+    })
+    return true
+  } catch (e) {
+    reportError('رسالة الدعم', e)
+    return false
   }
 }
