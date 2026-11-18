@@ -752,7 +752,20 @@ export default function App() {
     if (el) el.scrollTop = el.scrollHeight
   }, [adminSupportChat?.messages.length])
   // فحص التحديثات عند الفتح: لو فيه إصدار أحدث على الريبو يظهر تنبيه جوّه التطبيق
+  // (v51) «بعدين» بتأجّل التنبيه 4 فتحات بس: عدّاد الفتحات بيزيد مرة واحدة مع كل
+  // فتحة للتطبيق، وقيمة التأجيل المخزنة «الإصدار:عدد الفتحات وقت التأجيل».
+  const isUpdateSnoozed = (version: number, launchCount: number) => {
+    const raw = localStorage.getItem('indtoktok-update-dismissed')
+    if (!raw) return false
+    const [v, at] = raw.split(':')
+    if (Number(v) !== version) return false
+    // القيم القديمة (إصدار بس من غير عدد) بتتعامل كأنها اتأجّلت عند الفتحة 0
+    const dismissedAt = at === undefined ? 0 : parseInt(at, 10) || 0
+    return launchCount - dismissedAt < 4
+  }
   useEffect(() => {
+    const launchCount = (parseInt(localStorage.getItem('indtoktok-launch-count') ?? '0', 10) || 0) + 1
+    localStorage.setItem('indtoktok-launch-count', String(launchCount))
     let cancelled = false
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), 6000)
@@ -762,7 +775,7 @@ export default function App() {
         clearTimeout(timer)
         if (cancelled || !data || typeof data.version !== 'number') return
         if (data.version <= APP_VERSION) return
-        if (localStorage.getItem('indtoktok-update-dismissed') === String(data.version)) return
+        if (isUpdateSnoozed(data.version, launchCount)) return
         setAvailableUpdate({ version: data.version, apkUrl: typeof data.apkUrl === 'string' ? data.apkUrl : '', sha256: typeof data.sha256 === 'string' ? data.sha256 : undefined })
       })
       .catch(() => {
@@ -2653,8 +2666,12 @@ export default function App() {
     }
   }
   // مودال التحديث — بيظهر لما يكون فيه إصدار أحدث (قابل للتجاهل، مش إجباري)
+  // (v51) «بعدين» بتأجّل التنبيه 4 فتحات بس: بنخزّن عدد الفتحات الحالي مع الإصدار
   const dismissUpdate = () => {
-    if (availableUpdate) localStorage.setItem('indtoktok-update-dismissed', String(availableUpdate.version))
+    if (availableUpdate) {
+      const launchCount = parseInt(localStorage.getItem('indtoktok-launch-count') ?? '0', 10) || 0
+      localStorage.setItem('indtoktok-update-dismissed', `${availableUpdate.version}:${launchCount}`)
+    }
     setAvailableUpdate(null)
   }
   const updateModal = availableUpdate ? (
