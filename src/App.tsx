@@ -5,10 +5,12 @@ import { Directory, Filesystem } from '@capacitor/filesystem'
 import { FileOpener } from '@capacitor-community/file-opener'
 import MapView from './MapView'
 import type { MapMode } from './MapView'
-import { IconBack, IconBell, IconChat, IconCheck, IconDriver, IconEdit, IconHistory, IconList, IconNav, IconPhone, IconPin, IconSettings, IconShield, IconSwap, IconTrash, IconUser, IconWallet } from './icons'
+import { IconBack, IconBell, IconChat, IconCheck, IconDriver, IconEdit, IconHistory, IconList, IconMic, IconMicOff, IconNav, IconPhone, IconPhoneOff, IconPin, IconSettings, IconShield, IconSwap, IconTrash, IconUser, IconVolume, IconWallet } from './icons'
 import logoUrl from './assets/icon-1024.png'
 import { APP_VERSION, VERSION_URL } from './version'
-import { approvePaymentTx, applyCommissionTx, applyRatingTx, deleteDocById, firebaseEnabled, loadAdminSettings, loadDoc, loadLaunch, nextOrderNumber, saveAdminSettings, sendSupportMessage, subscribeDrivers, subscribeLaunchWaitlist, subscribePassengers, subscribePayments, subscribeRides, subscribeSupportChat, subscribeSupportChats, subscribeWaitlist, uploadImageAsDataUrl, saveDoc } from './firebaseDb'
+import { approvePaymentTx, applyCommissionTx, applyRatingTx, deleteDocById, firebaseEnabled, loadAdminSettings, loadDoc, loadLaunch, nextOrderNumber, saveAdminSettings, sendSupportMessage, subscribeCall, subscribeDrivers, subscribeLaunchWaitlist, subscribePassengers, subscribePayments, subscribeRides, subscribeSupportChat, subscribeSupportChats, subscribeWaitlist, updateCallDoc, uploadImageAsDataUrl, saveDoc } from './firebaseDb'
+import { VoiceCall } from './voiceCall'
+import type { VoiceCallEvent } from './voiceCall'
 import { getFirebaseAuth } from './firebaseApp'
 import { where } from 'firebase/firestore'
 import { isInServiceArea, isInServiceBBox, OUT_OF_AREA_MESSAGE, OUT_OF_AREA_TITLE } from './geo'
@@ -31,7 +33,7 @@ import {
   MAX_DEBT_EGP,
   OTP_MAX_PER_HOUR,
 } from './types'
-import type { DriverProfile, LatLng, LaunchSettings, Offer, PaymentRequest, Ride, Role, SupportChat } from './types'
+import type { DriverProfile, LatLng, LaunchSettings, Offer, PaymentRequest, Ride, RideCall, Role, SupportChat } from './types'
 
 function stars(value: number, onRate?: (n: number) => void) {
   return (
@@ -481,6 +483,22 @@ export default function App() {
   const [cancelTarget, setCancelTarget] = useState<string | null>(null)
   const [cancelReason, setCancelReason] = useState('')
   const [cancelReasonOther, setCancelReasonOther] = useState('')
+  // مكالمات صوتية VoIP (v52): حالة واجهة المكالمة + مكالمة واردة مستنية الرد
+  const [callUi, setCallUi] = useState<{
+    rideId: string
+    status: 'outgoing' | 'incoming' | 'active'
+    peerName: string
+    muted: boolean
+    speakerOn: boolean
+    seconds: number
+  } | null>(null)
+  const [incomingCall, setIncomingCall] = useState<RideCall | null>(null)
+  const voiceCallRef = useRef<VoiceCall | null>(null)
+  const callRideRef = useRef<string | null>(null)
+  const callUiRef = useRef(callUi)
+  callUiRef.current = callUi
+  // عشان الرنين يشتغل مرة واحدة بس لكل مكالمة واردة (مش مع كل تحديث للمستند)
+  const incomingCallRef = useRef<RideCall | null>(null)
   const stateRef = useRef(state)
   stateRef.current = state
 
@@ -751,6 +769,87 @@ export default function App() {
     const el = adminSupportListRef.current
     if (el) el.scrollTop = el.scrollHeight
   }, [adminSupportChat?.messages.length])
+  // ---- مكالمات صوتية VoIP (v52): اشتراك حي في مكالمة الرحلة النشطة ----
+  // الرحلة اللي المكالمات مسموحة فيها (بعد القبول بس): رقم الطلب + حالتها
+  const callRideId = appRole === 'passenger' ? (activeRide?.orderNo ?? null) : (myCurrentRide?.orderNo ?? null)
+  const callRideStatus = appRole === 'passenger' ? activeRide?.status : myCurrentRide?.status
+  useEffect(() => {
+    if (!firebaseEnabled || !callRideId) return undefined
+    if (callRideStatus !== 'matched' && callRideStatus !== 'driver_arrived' && callRideStatus !== 'on_trip') return undefined
+    const myRole: 'passenger' | 'driver' = appRole === 'driver' ? 'driver' : 'passenger'
+    return subscribeCall(callRideId, (doc) => {
+      const vc = voiceCallRef.current
+      if (!doc) {
+        setIncomingCall(null)
+        return
+      }
+      // مكالمة واردة بترن من الطرف التاني — مودال القبول/الرفض + رنين (مرة واحدة)
+      if (doc.status === 'ringing' && doc.callerRole !== myRole && !vc) {
+        if (incomingCallRef.current?.rideId !== doc.rideId) ring()
+        incomingCallRef.current = doc
+        setIncomingCall(doc)
+        return
+      }
+      // أنا المتصل والإجابة وصلت — طبّقها + مرشحي ICE بتوع الطرف التاني
+      if (doc.status === 'active' && doc.callerRole === myRole && vc) {
+        void vc.applyAnswer(doc)
+        vc.applyRemoteCandidates(doc.calleeCandidates)
+        return
+      }
+      // أنا الطرف التاني وقبلت — مرشحو ICE جداد من المتصل
+      if (doc.status === 'active' && doc.callerRole !== myRole && vc) {
+        vc.applyRemoteCandidates(doc.callerCandidates)
+        return
+      }
+      // الطرف التاني رفض وأنا المتصل
+      if (doc.status === 'declined' && doc.callerRole === myRole && vc) {
+        clearCallLocal()
+        showNotice('الطرف التاني رفض المكالمة.')
+        return
+      }
+      // المكالمة انتهت من الطرف التاني — اقفل محلياً
+      if (doc.status === 'ended') {
+        if (vc) {
+          clearCallLocal()
+          showNotice('المكالمة انتهت.')
+        } else {
+          setIncomingCall(null)
+        }
+      }
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [callRideId, callRideStatus])
+  // (v52) المكالمة بتنتهي لوحدها لما الرحلة تخلص أو تتلغي
+  useEffect(() => {
+    if (!callRideRef.current) return
+    const st = appRole === 'passenger' ? activeRide?.status : myCurrentRide?.status
+    if (st === 'completed' || st === 'cancelled' || !st) {
+      const vc = voiceCallRef.current
+      if (vc) void vc.end()
+      clearCallLocal()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeRide?.status, myCurrentRide?.status])
+  // (v52) لو محدش رد على المكالمة خلال 30 ثانية بتتقفل لوحدها
+  useEffect(() => {
+    if (!callUi || callUi.status !== 'outgoing') return undefined
+    const t = setTimeout(() => {
+      const vc = voiceCallRef.current
+      if (vc) void vc.end()
+      clearCallLocal()
+      showNotice('محدش رد على المكالمة.')
+    }, 30000)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [callUi?.status])
+  // (v52) عدّاد وقت المكالمة — بيعد بس وهي شغالة
+  useEffect(() => {
+    if (!callUi || callUi.status !== 'active') return undefined
+    const t = setInterval(() => {
+      setCallUi((s) => (s && s.status === 'active' ? { ...s, seconds: s.seconds + 1 } : s))
+    }, 1000)
+    return () => clearInterval(t)
+  }, [callUi?.status])
   // فحص التحديثات عند الفتح: لو فيه إصدار أحدث على الريبو يظهر تنبيه جوّه التطبيق
   // (v51) «بعدين» بتأجّل التنبيه 4 فتحات بس: عدّاد الفتحات بيزيد مرة واحدة مع كل
   // فتحة للتطبيق، وقيمة التأجيل المخزنة «الإصدار:عدد الفتحات وقت التأجيل».
@@ -1243,6 +1342,126 @@ export default function App() {
   }
 
   /** إلغاء رحلة مع سبب — السبب بيظهر للطرف التاني وفي السجل. */
+  // ---- مكالمات صوتية VoIP (v52) ----
+  /** ينهي المكالمة محلياً ويمسح حالتها — من غير كتابة على السيرفر */
+  function clearCallLocal() {
+    voiceCallRef.current?.closeLocal()
+    voiceCallRef.current = null
+    callRideRef.current = null
+    incomingCallRef.current = null
+    setCallUi(null)
+    setIncomingCall(null)
+  }
+
+  /** أحداث المكالمة من مدير WebRTC — اتصال، انتهاء، أو خطأ */
+  function handleCallEvent(e: VoiceCallEvent) {
+    if (e.type === 'connected') {
+      setCallUi((s) => (s ? { ...s, status: 'active' } : s))
+      return
+    }
+    if (e.type === 'ended') {
+      clearCallLocal()
+      if (e.reason === 'declined') showNotice('الطرف التاني رفض المكالمة.')
+      else if (e.reason === 'no-answer') showNotice('محدش رد على المكالمة.')
+      else showNotice('المكالمة انتهت.')
+      return
+    }
+    if (e.type === 'error') {
+      clearCallLocal()
+      showNotice(e.message)
+    }
+  }
+
+  /** بدء مكالمة صوتية من الرحلة النشطة — المتصل (راكب أو كابتن) */
+  async function startVoiceCall(ride: Ride, myRole: 'passenger' | 'driver') {
+    if (callUi || voiceCallRef.current) return // مكالمة شغالة أصلاً
+    const peerName = myRole === 'passenger' ? (ride.driverName || 'الكابتن') : ride.passengerName
+    const myName = myRole === 'passenger' ? (state.passenger?.name ?? 'عميل') : (state.driver.name || 'كابتن')
+    const vc = new VoiceCall(ride.orderNo, myRole, { onEvent: handleCallEvent })
+    voiceCallRef.current = vc
+    callRideRef.current = ride.orderNo
+    try {
+      await vc.start(myName)
+      setCallUi({ rideId: ride.orderNo, status: 'outgoing', peerName, muted: false, speakerOn: false, seconds: 0 })
+    } catch (err) {
+      voiceCallRef.current = null
+      callRideRef.current = null
+      showNotice(err instanceof Error ? err.message : 'مقدرناش نبدأ المكالمة — حاول تاني.')
+    }
+  }
+
+  /** قبول مكالمة واردة — بيبني الاتصال وبيقلب الحالة active */
+  async function acceptIncomingCall() {
+    const doc = incomingCall
+    if (!doc) return
+    const myRole: 'passenger' | 'driver' = appRole === 'driver' ? 'driver' : 'passenger'
+    const peerName = doc.callerName || (myRole === 'passenger' ? 'الكابتن' : 'العميل')
+    const vc = new VoiceCall(doc.rideId, myRole, { onEvent: handleCallEvent })
+    voiceCallRef.current = vc
+    callRideRef.current = doc.rideId
+    incomingCallRef.current = null
+    setIncomingCall(null)
+    try {
+      await vc.accept(doc)
+      setCallUi({ rideId: doc.rideId, status: 'active', peerName, muted: false, speakerOn: false, seconds: 0 })
+    } catch (err) {
+      voiceCallRef.current = null
+      callRideRef.current = null
+      // بلّغ المتصل إن المكالمة اتلغت (عشان مودال الرنين يختفي عنده)
+      void updateCallDoc(doc.rideId, { status: 'ended' })
+      showNotice(err instanceof Error ? err.message : 'مقدرناش نقبل المكالمة — حاول تاني.')
+    }
+  }
+
+  /** رفض مكالمة واردة — بيبلّغ المتصل وبيخفي المودال */
+  function declineIncomingCall() {
+    const doc = incomingCall
+    incomingCallRef.current = null
+    setIncomingCall(null)
+    if (!doc) return
+    void updateCallDoc(doc.rideId, { status: 'declined' })
+  }
+
+  /** إنهاء المكالمة من طرفي — بيبلّغ الطرف التاني وبيقفل محلياً */
+  async function endVoiceCall() {
+    const vc = voiceCallRef.current
+    voiceCallRef.current = null
+    callRideRef.current = null
+    incomingCallRef.current = null
+    setCallUi(null)
+    setIncomingCall(null)
+    if (vc) await vc.end()
+  }
+
+  /** كتم/إلغاء كتم الميكروفون أثناء المكالمة */
+  function toggleCallMute() {
+    const vc = voiceCallRef.current
+    if (!vc) return
+    const muted = vc.toggleMute()
+    setCallUi((s) => (s ? { ...s, muted } : s))
+  }
+
+  /** تبديل السماعة الخارجية — على أندرويد الويب مش بيدعمها،
+   *  فلو فشل التبديل بنوضّح للمستخدم إن الصوت من سماعة المكالمات */
+  async function toggleCallSpeaker() {
+    const vc = voiceCallRef.current
+    if (!vc) return
+    const next = !(callUiRef.current?.speakerOn ?? false)
+    const ok = await vc.setSpeaker(next)
+    if (!ok) {
+      showNotice('مقدرناش نبدّل السماعة من هنا — الصوت هيطلع من سماعة المكالمات.')
+      return
+    }
+    setCallUi((s) => (s ? { ...s, speakerOn: next } : s))
+  }
+
+  /** وقت المكالمة بصيغة دقيقة:ثانية */
+  function fmtCallTime(totalSeconds: number): string {
+    const m = Math.floor(totalSeconds / 60)
+    const s = totalSeconds % 60
+    return `${m}:${s < 10 ? '0' : ''}${s}`
+  }
+
   function cancelRide(orderNo: string, reason: string, by: 'driver' | 'passenger') {
     const ride = state.rides.find((r) => r.orderNo === orderNo)
     if (!ride) return
@@ -1834,6 +2053,11 @@ export default function App() {
               <p className="muted">العميل على بعد {distanceKm({ lat: myCurrentRide.driverLat, lng: myCurrentRide.driverLng }, myCurrentRide.pickup)} كم منك</p>
             )}
             <a className="btn" href={`tel:${myCurrentRide.passengerPhone}`}><IconPhone /> اتصل بالعميل — {myCurrentRide.passengerPhone}</a>
+            {callUi?.rideId === myCurrentRide.orderNo ? (
+              <button className="btn active" disabled><IconPhone /> المكالمة شغالة…</button>
+            ) : (
+              <button className="btn" onClick={() => void startVoiceCall(myCurrentRide, 'driver')}><IconPhone /> مكالمة صوتية</button>
+            )}
             {rideTimes(myCurrentRide)}
           </div>
           <div className="row">
@@ -2038,6 +2262,11 @@ export default function App() {
                 </div>
                 {activeRide.driverPhone && (
                   <a className="btn" href={`tel:${activeRide.driverPhone}`}><IconPhone /> اتصل بالكابتن — {activeRide.driverPhone}</a>
+                )}
+                {callUi?.rideId === activeRide.orderNo ? (
+                  <button className="btn active" disabled><IconPhone /> المكالمة شغالة…</button>
+                ) : (
+                  <button className="btn" onClick={() => void startVoiceCall(activeRide, 'passenger')}><IconPhone /> مكالمة صوتية</button>
                 )}
                 {(activeRide.status === 'matched' || activeRide.status === 'driver_arrived') && (
                   <button className="btn danger" onClick={() => setCancelTarget(activeRide.orderNo)}>إلغاء الرحلة</button>
@@ -2592,6 +2821,36 @@ export default function App() {
       </div>
     </div>
   ) : null
+  /** مكالمة واردة (v52) — مودال في نص الشاشة بقبول/رفض، من غير رقم تليفون */
+  const incomingCallModal = incomingCall ? (
+    <div className="notice-overlay">
+      <div className="notice-modal">
+        <div className="call-avatar"><IconPhone /></div>
+        <p>مكالمة واردة من {incomingCall.callerRole === 'driver' ? 'الكابتن' : 'العميل'} {incomingCall.callerName}</p>
+        <p className="muted">مكالمة صوتية من جوّه التطبيق — رقمك مش هيظهر</p>
+        <div className="call-actions">
+          <button className="btn" onClick={acceptIncomingCall}><IconPhone /> رد</button>
+          <button className="btn danger" onClick={declineIncomingCall}><IconPhoneOff /> رفض</button>
+        </div>
+      </div>
+    </div>
+  ) : null
+  /** شاشة المكالمة الشغالة (v52) — المؤقت + كتم + سماعة + إنهاء */
+  const inCallModal = callUi ? (
+    <div className="notice-overlay">
+      <div className="notice-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="call-avatar"><IconPhone /></div>
+        <p>{callUi.status === 'outgoing' ? `بيتصل بـ ${callUi.peerName}…` : callUi.peerName}</p>
+        <p className="call-timer">{fmtCallTime(callUi.seconds)}</p>
+        <p className="muted">{callUi.status === 'outgoing' ? 'مستني الطرف التاني يرد…' : 'المكالمة شغالة'}</p>
+        <div className="call-actions">
+          <button className={callUi.muted ? 'btn active' : 'btn soft'} onClick={toggleCallMute}>{callUi.muted ? <IconMicOff /> : <IconMic />} {callUi.muted ? 'مكتوم' : 'كتم'}</button>
+          <button className={callUi.speakerOn ? 'btn active' : 'btn soft'} onClick={() => void toggleCallSpeaker()}><IconVolume /> سماعة</button>
+          <button className="btn danger" onClick={() => void endVoiceCall()}><IconPhoneOff /> إنهاء</button>
+        </div>
+      </div>
+    </div>
+  ) : null
   /** تكبير أي صورة (بطاقة سواق أو سكرين شوت تحويل) بملء الشاشة (v49) —
    *  الضغط على الصورة نفسها مبيقفلهاش (عشان تكبّر وتشوف التفاصيل)،
    *  الخروج بالضغط برّه الصورة أو على زرار ✕ */
@@ -2769,6 +3028,8 @@ export default function App() {
         </nav>
       )}
       {noticeModal}
+      {incomingCallModal}
+      {inCallModal}
       {lightboxModal}
       {updateModal}
       {outOfAreaModal}

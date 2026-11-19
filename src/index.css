@@ -222,3 +222,11 @@ label { font-weight: 700; font-size: 14px; }
 .chat-time { font-size: 11px; opacity: 0.65; margin-top: 4px; text-align: left; }
 /* محادثة فيها رسالة جديدة مستنية رد الأدمن */
 .chat-unread { border-color: #f59e0b; background: #fffbeb; }
+
+/* مكالمات صوتية VoIP (v52) — أيقونة المتصل + مؤقت + أزرار المكالمة */
+.call-avatar { width: 72px; height: 72px; margin: 0 auto 12px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: linear-gradient(180deg, #4ade80, var(--green) 60%, var(--green-deep)); color: #fff; box-shadow: 0 1px 0 rgba(255,255,255,.45) inset, 0 -3px 0 rgba(20, 83, 45, 0.3) inset, 0 8px 18px rgba(22, 163, 74, 0.45); animation: call-ring 1.2s ease-in-out infinite; }
+.call-avatar .ic { width: 34px; height: 34px; }
+@keyframes call-ring { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.08); } }
+.call-timer { font-size: 28px; font-weight: 800; margin: 4px 0 8px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.call-actions { display: flex; flex-wrap: wrap; gap: 4px; justify-content: center; margin-top: 12px; }
+.call-actions .btn { margin: 4px 2px; }

@@ -192,3 +192,34 @@ export const OTP_VALID_MINUTES = 10 // صلاحية الكود (للعرض فق�
 export const OTP_CODE_LENGTH = 6 // كود Firebase Phone Auth: 6 أرقام يوصلوا برسالة SMS
 export const FARE_MIN = 5
 export const FARE_MAX = 500
+
+// ---------------------------------------------------------------------------
+//  مكالمات صوتية VoIP (v52) — صوت بس، من غير فيديو، بين الراكب والكابتن
+//  أثناء الرحلة. الإشارة (offer/answer/ICE) بتتم عبر مستند واحد في
+//  Firestore: calls/{orderNo} — مستند واحد لكل رحلة، بيتمسح/بينتهي
+//  مع نهاية الرحلة. مفيش أرقام تليفون في المكالمة إطلاقاً.
+// ---------------------------------------------------------------------------
+
+/** حالة المكالمة: ringing = بترن عند الطرف التاني، active = شغالة،
+ *  ended = انتهت، declined = الطرف التاني رفض */
+export type CallStatus = 'ringing' | 'active' | 'ended' | 'declined'
+
+/** مستند مكالمة واحدة في Firestore — calls/{orderNo} */
+export interface RideCall {
+  /** رقم الطلب — هو نفسه معرّف المستند */
+  rideId: string
+  status: CallStatus
+  /** مين اللي بدأ المكالمة */
+  callerRole: 'passenger' | 'driver'
+  /** اسم اللي بدأ المكالمة (اسم بس — من غير رقم تليفون) */
+  callerName: string
+  /** عرض WebRTC من اللي بدأ المكالمة */
+  offer: { type: string; sdp: string } | null
+  /** رد WebRTC من الطرف التاني */
+  answer: { type: string; sdp: string } | null
+  /** مرشحو ICE من اللي بدأ المكالمة */
+  callerCandidates: RTCIceCandidateInit[]
+  /** مرشحو ICE من الطرف التاني */
+  calleeCandidates: RTCIceCandidateInit[]
+  updatedAt: number
+}

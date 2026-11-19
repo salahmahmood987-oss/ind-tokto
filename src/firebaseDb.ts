@@ -41,7 +41,7 @@ import type { Firestore, QueryConstraint } from 'firebase/firestore'
 import { isFirebaseConfigured } from './firebaseConfig'
 import { getFirebaseApp } from './firebaseApp'
 import { preparePhotoForFirestore } from './imageUpload'
-import type { DriverProfile, LaunchWaitlistEntry, PassengerProfile, PaymentRequest, Ride, SupportChat, SupportMessage, WaitlistEntry } from './types'
+import type { DriverProfile, LaunchWaitlistEntry, PassengerProfile, PaymentRequest, Ride, RideCall, SupportChat, SupportMessage, WaitlistEntry } from './types'
 
 export const firebaseEnabled = isFirebaseConfigured
 
@@ -647,5 +647,97 @@ export async function sendSupportMessage(input: {
   } catch (e) {
     reportError('رسالة الدعم', e)
     return false
+  }
+}
+
+// ---------------------------------------------------------------------------
+//  مكالمات صوتية VoIP (v52) — الإشارة عبر مستند واحد لكل رحلة:
+//  calls/{orderNo} — offer/answer + مرشحو ICE + حالة المكالمة.
+//  المستند بيتكتب مرة واحدة عند بدء المكالمة، وبعدها تحديثات صغيرة
+//  (الإجابة، المرشحون، الإنهاء). الصوت نفسه WebRTC مباشر بين الجهازين.
+// ---------------------------------------------------------------------------
+
+/** يحوّل مستند مكالمة من Firestore لكائن RideCall كامل. */
+function normalizeCall(id: string, data: Record<string, unknown>): RideCall {
+  const d = data as unknown as Partial<RideCall>
+  const sdp = (v: unknown): { type: string; sdp: string } | null => {
+    if (!v || typeof v !== 'object') return null
+    const o = v as { type?: unknown; sdp?: unknown }
+    return typeof o.type === 'string' && typeof o.sdp === 'string' ? { type: o.type, sdp: o.sdp } : null
+  }
+  const cands = (v: unknown): RTCIceCandidateInit[] => (Array.isArray(v) ? (v as RTCIceCandidateInit[]) : [])
+  return {
+    rideId: d.rideId ?? id,
+    status: d.status === 'active' || d.status === 'ended' || d.status === 'declined' ? d.status : 'ringing',
+    callerRole: d.callerRole === 'driver' ? 'driver' : 'passenger',
+    callerName: typeof d.callerName === 'string' ? d.callerName : '',
+    offer: sdp(d.offer),
+    answer: sdp(d.answer),
+    callerCandidates: cands(d.callerCandidates),
+    calleeCandidates: cands(d.calleeCandidates),
+    updatedAt: typeof d.updatedAt === 'number' ? d.updatedAt : 0,
+  }
+}
+
+/**
+ * اشتراك حي في مستند مكالمة رحلة واحدة — أي تغيير (رنين، إجابة،
+ * مرشح ICE جديد، إنهاء) يوصل فوراً للطرفين. null لو المستند
+ * مش موجود لسه (مفيش مكالمة). في الوضع التجريبي المحلي يرجع فاضي.
+ */
+export function subscribeCall(rideId: string, cb: (call: RideCall | null) => void): () => void {
+  try {
+    const db = getDb()
+    if (!db) return () => {}
+    const unsub = onSnapshot(
+      doc(db, 'calls', rideId),
+      (snap) => cb(snap.exists() ? normalizeCall(snap.id, snap.data() as Record<string, unknown>) : null),
+      (err) => reportError('مزامنة المكالمة', err),
+    )
+    return () => unsub()
+  } catch (e) {
+    reportError('مزامنة المكالمة', e)
+    return () => {}
+  }
+}
+
+/** ينشئ مستند المكالمة (أول ما المتصل يبدأ مكالمة) — false لو مفيش إعداد. */
+export async function createCallDoc(call: RideCall): Promise<boolean> {
+  try {
+    const db = getDb()
+    if (!db) return false
+    await setDoc(doc(db, 'calls', call.rideId), call as unknown as Record<string, unknown>)
+    return true
+  } catch (e) {
+    reportError('إنشاء المكالمة', e)
+    return false
+  }
+}
+
+/** يحدّث مستند مكالمة (الإجابة، الحالة، الإنهاء) — بيرجع false لو فشل. */
+export async function updateCallDoc(rideId: string, patch: Record<string, unknown>): Promise<boolean> {
+  try {
+    const db = getDb()
+    if (!db) return false
+    await setDoc(doc(db, 'calls', rideId), { ...patch, updatedAt: Date.now() }, { merge: true })
+    return true
+  } catch (e) {
+    reportError('تحديث المكالمة', e)
+    return false
+  }
+}
+
+/** يضيف مرشح ICE لمستند المكالمة (arrayUnion — مبيضيّعش المرشحين اللي قبله). */
+export async function addCallCandidate(
+  rideId: string,
+  side: 'caller' | 'callee',
+  candidate: RTCIceCandidateInit,
+): Promise<void> {
+  try {
+    const db = getDb()
+    if (!db) return
+    const field = side === 'caller' ? 'callerCandidates' : 'calleeCandidates'
+    await setDoc(doc(db, 'calls', rideId), { [field]: arrayUnion(candidate), updatedAt: Date.now() }, { merge: true })
+  } catch (e) {
+    reportError('مرشح ICE', e)
   }
 }

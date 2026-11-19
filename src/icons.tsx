@@ -81,6 +81,47 @@ export function IconPhone(p: IconProps): JSX.Element {
   )
 }
 
+/** إنهاء مكالمة — هاتف مقلوب مع خط */
+export function IconPhoneOff(p: IconProps): JSX.Element {
+  return (
+    <Svg {...p}>
+      <path d="M10.7 13.3 5 4h4l1.5 4.5L8 10.5a12 12 0 0 0 5.5 5.5l2-2.5L20 15v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z" />
+      <path d="m3 3 18 18" />
+    </Svg>
+  )
+}
+
+/** ميكروفون — للمكالمات الصوتية */
+export function IconMic(p: IconProps): JSX.Element {
+  return (
+    <Svg {...p}>
+      <rect x="9" y="2.5" width="6" height="11" rx="3" />
+      <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3.5M8.5 21.5h7" />
+    </Svg>
+  )
+}
+
+/** ميكروفون مكتوم — خط عليه */
+export function IconMicOff(p: IconProps): JSX.Element {
+  return (
+    <Svg {...p}>
+      <rect x="9" y="2.5" width="6" height="11" rx="3" />
+      <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3.5M8.5 21.5h7" />
+      <path d="m3 3 18 18" />
+    </Svg>
+  )
+}
+
+/** سماعة خارجية — مكبر صوت */
+export function IconVolume(p: IconProps): JSX.Element {
+  return (
+    <Svg {...p}>
+      <path d="M11 5 6.5 9H3v6h3.5L11 19V5z" />
+      <path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13" />
+    </Svg>
+  )
+}
+
 /** صح */
 export function IconCheck(p: IconProps): JSX.Element {
   return (
